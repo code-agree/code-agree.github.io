@@ -2,45 +2,45 @@
 <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
   <channel>
     <title>Tags on wenjun</title>
-    <link>https://example.com/tags/</link>
+    <link>https://code-agree.github.io/tags/</link>
     <description>Recent content in Tags on wenjun</description>
     <generator>Hugo -- gohugo.io</generator>
     <language>en-US</language>
     <lastBuildDate>Mon, 11 Mar 2019 00:00:00 +0000</lastBuildDate>
-    <atom:link href="https://example.com/tags/index.xml" rel="self" type="application/rss+xml" />
+    <atom:link href="https://code-agree.github.io/tags/index.xml" rel="self" type="application/rss+xml" />
     <item>
       <title>css</title>
-      <link>https://example.com/tags/css/</link>
+      <link>https://code-agree.github.io/tags/css/</link>
       <pubDate>Mon, 11 Mar 2019 00:00:00 +0000</pubDate>
-      <guid>https://example.com/tags/css/</guid>
+      <guid>https://code-agree.github.io/tags/css/</guid>
       <description></description>
     </item>
     <item>
       <title>html</title>
-      <link>https://example.com/tags/html/</link>
+      <link>https://code-agree.github.io/tags/html/</link>
       <pubDate>Mon, 11 Mar 2019 00:00:00 +0000</pubDate>
-      <guid>https://example.com/tags/html/</guid>
+      <guid>https://code-agree.github.io/tags/html/</guid>
       <description></description>
     </item>
     <item>
       <title>markdown</title>
-      <link>https://example.com/tags/markdown/</link>
+      <link>https://code-agree.github.io/tags/markdown/</link>
       <pubDate>Mon, 11 Mar 2019 00:00:00 +0000</pubDate>
-      <guid>https://example.com/tags/markdown/</guid>
+      <guid>https://code-agree.github.io/tags/markdown/</guid>
       <description></description>
     </item>
     <item>
       <title>emoji</title>
-      <link>https://example.com/tags/emoji/</link>
+      <link>https://code-agree.github.io/tags/emoji/</link>
       <pubDate>Tue, 05 Mar 2019 00:00:00 +0000</pubDate>
-      <guid>https://example.com/tags/emoji/</guid>
+      <guid>https://code-agree.github.io/tags/emoji/</guid>
       <description></description>
     </item>
     <item>
       <title>projects</title>
-      <link>https://example.com/tags/projects/</link>
+      <link>https://code-agree.github.io/tags/projects/</link>
       <pubDate>Sun, 02 Oct 2016 22:55:05 -0400</pubDate>
-      <guid>https://example.com/tags/projects/</guid>
+      <guid>https://code-agree.github.io/tags/projects/</guid>
       <description></description>
     </item>
   </channel>
