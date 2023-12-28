@@ -7,10 +7,10 @@
     <meta name="author" content="Chris Turner">
     <link rel="shortcut icon" type="image/x-icon" href="https://example.com/img/favicon.ico">
     <title>How to creat Hugo Site | Chris Turner</title>
-    <meta name="description" content="hugo &#43; Git-page
+    <meta name="description" content="Hugo &#43; Git-page
 创建Hugo Site
 # Run these commands to create a Hugo site with the [Ananke](https://github.com/theNewDynamic/gohugo-theme-ananke) theme. hugo new site quickstart cd quickstart git init git submodule add https://github.com/theNewDynamic/gohugo-theme-ananke.git themes/ananke echo &#34;theme = &#39;ananke&#39;&#34; &gt;&gt; hugo.toml hugo server 如何部署到Git-page
-# 执行 yuwenjun@wenjunyus-MacBook-Air Sustain_site % hugo --theme=hugo-sustain -b=&#34;https://code-agree.github.io/&#34; yuwenjun@wenjunyus-MacBook-Air Sustain_site % hugo --theme=hugo-sustain --baseURL=&#34;https://code-agree.github.io/&#34; # 执行上述操作会在根目录下创建public/目录 yuwenjun@wenjunyus-MacBook-Air Sustain_site % ls -l total 8 drwxr-xr-x 3 yuwenjun staff 96 12 27 22:25 archetypes drwxr-xr-x 2 yuwenjun staff 64 12 27 22:25 assets -rw-r--r-- 1 yuwenjun staff 1063 12 27 22:55 config.">
+# 执行 hugo --theme=hugo-sustain -b=&#34;https://code-agree.github.io/&#34; hugo --theme=hugo-sustain --baseURL=&#34;https://code-agree.github.io/&#34; # 执行上述操作会在根目录下创建public/目录 ls -l total 8 drwxr-xr-x 3 yuwenjun staff 96 12 27 22:25 archetypes drwxr-xr-x 2 yuwenjun staff 64 12 27 22:25 assets -rw-r--r-- 1 yuwenjun staff 1063 12 27 22:55 config.">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-BmbxuPwQa2lc/FVzBcNJ7UAyJxM6wuqIj61tLrc4wSX0szH/Ev+nYRRuWlolflfl" crossorigin="anonymous">
     
     <link rel="preload stylesheet" href="/css/main.min.css" as="style">
@@ -71,7 +71,7 @@
     <div class="panel">
       <div class="panel-body">
         <div class="blogpost">
-          <p>hugo + Git-page</p>
+          <p>Hugo + Git-page</p>
 <p>创建Hugo Site</p>
 <div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Run these commands to create a Hugo site with the [Ananke](https://github.com/theNewDynamic/gohugo-theme-ananke) theme.</span>
 </span></span><span style="display:flex;"><span>hugo new site quickstart
@@ -79,11 +79,11 @@
 </span></span><span style="display:flex;"><span>git init 
 </span></span><span style="display:flex;"><span>git submodule add https://github.com/theNewDynamic/gohugo-theme-ananke.git themes/ananke echo <span style="color:#e6db74">&#34;theme = &#39;ananke&#39;&#34;</span> &gt;&gt; hugo.toml hugo server
 </span></span></code></pre></div><p>如何部署到Git-page</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 执行 yuwenjun@wenjunyus-MacBook-Air Sustain_site % hugo --theme=hugo-sustain -b=&#34;https://code-agree.github.io/&#34;</span>
-</span></span><span style="display:flex;"><span>yuwenjun@wenjunyus-MacBook-Air Sustain_site % hugo --theme<span style="color:#f92672">=</span>hugo-sustain --baseURL<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;https://code-agree.github.io/&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 执行  hugo --theme=hugo-sustain -b=&#34;https://code-agree.github.io/&#34;</span>
+</span></span><span style="display:flex;"><span>hugo --theme<span style="color:#f92672">=</span>hugo-sustain --baseURL<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;https://code-agree.github.io/&#34;</span>
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 执行上述操作会在根目录下创建public/目录</span>
-</span></span><span style="display:flex;"><span>yuwenjun@wenjunyus-MacBook-Air Sustain_site % ls -l
+</span></span><span style="display:flex;"><span>ls -l
 </span></span><span style="display:flex;"><span>total <span style="color:#ae81ff">8</span>
 </span></span><span style="display:flex;"><span>drwxr-xr-x   <span style="color:#ae81ff">3</span> yuwenjun  staff    <span style="color:#ae81ff">96</span> <span style="color:#ae81ff">12</span> <span style="color:#ae81ff">27</span> 22:25 archetypes
 </span></span><span style="display:flex;"><span>drwxr-xr-x   <span style="color:#ae81ff">2</span> yuwenjun  staff    <span style="color:#ae81ff">64</span> <span style="color:#ae81ff">12</span> <span style="color:#ae81ff">27</span> 22:25 assets
@@ -112,12 +112,12 @@
 </span></span><span style="display:flex;"><span>hugo server --buildDrafts
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 之后需要到public/ 下将变更push到远端仓库 </span>
-</span></span><span style="display:flex;"><span>yuwenjun@wenjunyus-MacBook-Air Sustain_site % cd public
+</span></span><span style="display:flex;"><span>cd public
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 在public目录 %%,把变更push到远端仓库git@github.com:code-agree/code-agree.github.io.git</span>
-</span></span><span style="display:flex;"><span>yuwenjun@wenjunyus-MacBook-Air public % git push -u origin main
-</span></span></code></pre></div><p>Hugo Quick start:  <a href="https://gohugo.io/getting-started/quick-start/">https://gohugo.io/getting-started/quick-start/</a>
-template: <a href="https://themes.gohugo.io/themes/hugo-sustain/#quick-start">https://themes.gohugo.io/themes/hugo-sustain/#quick-start</a>
+</span></span><span style="display:flex;"><span>git push -u origin main
+</span></span></code></pre></div><p>Hugo Quick start:  <a href="https://gohugo.io/getting-started/quick-start/">https://gohugo.io/getting-started/quick-start/</a><br>
+template: <a href="https://themes.gohugo.io/themes/hugo-sustain/#quick-start">https://themes.gohugo.io/themes/hugo-sustain/#quick-start</a><br>
 help video: <a href="https://www.bilibili.com/video/BV1x64y117PX/?spm_id_from=333.337.search-card.all.click&amp;vd_source=c22cfd997d133a761992ef4c20edcf13">https://www.bilibili.com/video/BV1x64y117PX/?spm_id_from=333.337.search-card.all.click&amp;vd_source=c22cfd997d133a761992ef4c20edcf13</a></p>
 
           
