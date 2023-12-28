@@ -2,31 +2,31 @@
 <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
   <channel>
     <title>Categories on Chris Turner</title>
-    <link>https://code-agree.github.io/categories/</link>
+    <link>https://example.com/categories/</link>
     <description>Recent content in Categories on Chris Turner</description>
     <generator>Hugo -- gohugo.io</generator>
     <language>en-US</language>
     <lastBuildDate>Mon, 11 Mar 2019 00:00:00 +0000</lastBuildDate>
-    <atom:link href="https://code-agree.github.io/categories/index.xml" rel="self" type="application/rss+xml" />
+    <atom:link href="https://example.com/categories/index.xml" rel="self" type="application/rss+xml" />
     <item>
       <title>syntax</title>
-      <link>https://code-agree.github.io/categories/syntax/</link>
+      <link>https://example.com/categories/syntax/</link>
       <pubDate>Mon, 11 Mar 2019 00:00:00 +0000</pubDate>
-      <guid>https://code-agree.github.io/categories/syntax/</guid>
+      <guid>https://example.com/categories/syntax/</guid>
       <description></description>
     </item>
     <item>
       <title>themes</title>
-      <link>https://code-agree.github.io/categories/themes/</link>
+      <link>https://example.com/categories/themes/</link>
       <pubDate>Mon, 11 Mar 2019 00:00:00 +0000</pubDate>
-      <guid>https://code-agree.github.io/categories/themes/</guid>
+      <guid>https://example.com/categories/themes/</guid>
       <description></description>
     </item>
     <item>
       <title>projects</title>
-      <link>https://code-agree.github.io/categories/projects/</link>
+      <link>https://example.com/categories/projects/</link>
       <pubDate>Sun, 02 Oct 2016 22:55:05 -0400</pubDate>
-      <guid>https://code-agree.github.io/categories/projects/</guid>
+      <guid>https://example.com/categories/projects/</guid>
       <description></description>
     </item>
   </channel>
