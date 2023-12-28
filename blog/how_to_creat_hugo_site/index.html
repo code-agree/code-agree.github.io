@@ -119,9 +119,13 @@
 </span></span></code></pre></div><p>Hugo Quick start:  <a href="https://gohugo.io/getting-started/quick-start/">https://gohugo.io/getting-started/quick-start/</a><br>
 template: <a href="https://themes.gohugo.io/themes/hugo-sustain/#quick-start">https://themes.gohugo.io/themes/hugo-sustain/#quick-start</a><br>
 help video: <a href="https://www.bilibili.com/video/BV1x64y117PX/?spm_id_from=333.337.search-card.all.click&amp;vd_source=c22cfd997d133a761992ef4c20edcf13">https://www.bilibili.com/video/BV1x64y117PX/?spm_id_from=333.337.search-card.all.click&amp;vd_source=c22cfd997d133a761992ef4c20edcf13</a></p>
-<p>FAQ:
-增加新内容后,直接hugo生成静态文件,push到远端.访问http页面,刷新后页面变成example domain.
-解决方法: 使用该命令hugo &ndash;theme=hugo-sustain &ndash;baseURL=&ldquo;<a href="https://code-agree.github.io/%22">https://code-agree.github.io/&quot;</a>, 指定baseURL</p>
+<p>FAQ<br>
+增加新内容后,直接hugo生成静态文件,push到远端.访问http页面,刷新后页面变成example domain.<br>
+解决方法:</p>
+<ul>
+<li>使用该命令hugo &ndash;theme=hugo-sustain &ndash;baseURL=&ldquo;<a href="https://code-agree.github.io/%22">https://code-agree.github.io/&quot;</a>, 指定baseURL <strong>doesn&rsquo;t work</strong></li>
+<li>修改config.toml中的baseURL = &ldquo;<a href="https://code-agree.github.io/%22">https://code-agree.github.io/&quot;</a>  <strong>work</strong></li>
+</ul>
 
           
           
