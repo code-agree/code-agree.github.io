@@ -6,8 +6,15 @@
     <description>Recent content on wenjun</description>
     <generator>Hugo -- gohugo.io</generator>
     <language>en-US</language>
-    <lastBuildDate>Thu, 28 Dec 2023 20:00:32 +0800</lastBuildDate>
+    <lastBuildDate>Thu, 07 Mar 2024 13:31:40 +0800</lastBuildDate>
     <atom:link href="https://code-agree.github.io/index.xml" rel="self" type="application/rss+xml" />
+    <item>
+      <title>How_to_fix_obsidian_icloud</title>
+      <link>https://code-agree.github.io/blog/how_to_fix_obsidian_icloud/</link>
+      <pubDate>Thu, 07 Mar 2024 13:31:40 +0800</pubDate>
+      <guid>https://code-agree.github.io/blog/how_to_fix_obsidian_icloud/</guid>
+      <description>解决obsidian本地配置和插件被icloud删除的问题 问题现象 obsidian 客户端经常出现第三方插件无故丢失的现象 现状描述 本人的obsidian本地库是存储在icloud下的，同时备份在Github上。某天发现obsidian客户端安装的插件突然消失了，排查后发现是本地的./.obsidian/目录被整个删除了；查看git 提交记录发现前几次commit ./odsidian/文件夹都是存在的。而且这个目录下存储着obsidian的基础配置和第三方插件文件。 解决办法 将本地仓库的./odsidian/文件夹回滚到未删除的某次提交状态 运行 git log 命令查看提交日志,找到你需要回滚到的那次提交的commit ID(一串SHA-1哈希值)。 拷贝该commit Id，然后执行 git checkout &amp;lt;commit_id&amp;gt; path/to/file&#xA;这条命令会从指定的提交中将文件内容复制到你当前的工作区。 运行 git status 你会看到该文件已被修改。可以使用 git diff 查看与当前版本的差异。如果文件内容正确，可以暂存并 提交改动&amp;gt; 来保存恢复的文件 后续再执行git commit等操作即可重新 如果觉得不需要保留该文件,直接运行 git checkout -- path/to/file就可以从暂存区中撤销对该文件的改动。 重新找回被删除的文件夹，重新加载obsidian本地仓库即可 根本原因 icloud删除本地obsidian仓库的./obsidian/文件夹？ obsidian 插件删除？ </description>
+    </item>
     <item>
       <title>How to creat Hugo Site</title>
       <link>https://code-agree.github.io/blog/how_to_creat_hugo_site/</link>
