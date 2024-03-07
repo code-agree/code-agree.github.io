@@ -110,16 +110,21 @@ if (!doNotTrack) {
 <li>生成静态文件到public/</li>
 <li>在public/ 将变更push到远端</li>
 </ol>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># add content </span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>1. 先创建本地文件
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># add content </span>
 </span></span><span style="display:flex;"><span>hugo new content posts/my-first-post.md
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Hugo created the file in the `content/posts` directory. Open the file with your editor.</span>
-</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>2. 修改内容
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Add some text to the body of the post, but do not change the `draft` value.</span>
 </span></span><span style="display:flex;"><span>
-</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>3. 查看变更
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># then start Hugo’s development server to view the site, Hugo creates the entire static site in the `public` directory in the root of your project. This includes the HTML files, and assets such as images, CSS files, and JavaScript files.</span>
 </span></span><span style="display:flex;"><span>hugo server --buildDrafts
 </span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>4. 生成本地静态文件
+</span></span><span style="display:flex;"><span>yuwenjun@wenjunyus-MacBook-Air Sustain_site % hugo
+</span></span><span style="display:flex;"><span>Start building sites …
+</span></span><span style="display:flex;"><span>5. push到远程仓库
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 之后需要到public/ 下将变更push到远端仓库 </span>
 </span></span><span style="display:flex;"><span>cd public
 </span></span><span style="display:flex;"><span>
