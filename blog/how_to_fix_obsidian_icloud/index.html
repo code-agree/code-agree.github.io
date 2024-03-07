@@ -7,7 +7,7 @@
     <meta name="author" content="wenjun">
     <link rel="shortcut icon" type="image/x-icon" href="https://code-agree.github.io/img/favicon.ico">
     <title>How_to_fix_obsidian_icloud | wenjun</title>
-    <meta name="description" content="解决obsidian本地配置和插件被icloud删除的问题 问题现象 obsidian 客户端经常出现第三方插件无故丢失的现象 现状描述 本人的obsidian本地库是存储在icloud下的，同时备份在Github上。某天发现obsidian客户端安装的插件突然消失了，排查后发现是本地的./.obsidian/目录被整个删除了；查看git 提交记录发现前几次commit ./odsidian/文件夹都是存在的。而且这个目录下存储着obsidian的基础配置和第三方插件文件。 解决办法 将本地仓库的./odsidian/文件夹回滚到未删除的某次提交状态 运行 git log 命令查看提交日志,找到你需要回滚到的那次提交的commit ID(一串SHA-1哈希值)。 拷贝该commit Id，然后执行 git checkout &lt;commit_id&gt; path/to/file
+    <meta name="description" content="解决obsidian本地配置和插件被icloud删除的问题 问题现象 obsidian 客户端经常出现第三方插件无故丢失的现象 现状描述 本人的obsidian本地库是存储在icloud下的，同时备份在Github上。某天发现obsidian客户端安装的插件突然消失了，排查后发现是本地的./.obsidian/目录被整个删除了；查看git 提交记录发现前几次commit ./odsidian/文件夹都是存在的。而且这个目录下存储着obsidian的基础配置和第三方插件文件。 解决办法 将本地仓库的./odsidian/文件夹回滚到未删除的某次提交状态 运行 git log 命令查看提交日志,找到你需要回滚到的那次提交的commit ID(一串SHA-1哈希值)。 拷贝该commit Id，然后执行git checkout &lt;commit_id&gt; path/to/file
 这条命令会从指定的提交中将文件内容复制到你当前的工作区。 运行 git status 你会看到该文件已被修改。可以使用 git diff 查看与当前版本的差异。如果文件内容正确，可以暂存并 提交改动&gt; 来保存恢复的文件 后续再执行git commit等操作即可重新 如果觉得不需要保留该文件,直接运行 git checkout -- path/to/file就可以从暂存区中撤销对该文件的改动。 重新找回被删除的文件夹，重新加载obsidian本地仓库即可 根本原因 icloud删除本地obsidian仓库的./obsidian/文件夹？ obsidian 插件删除？ ">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-BmbxuPwQa2lc/FVzBcNJ7UAyJxM6wuqIj61tLrc4wSX0szH/Ev+nYRRuWlolflfl" crossorigin="anonymous">
     
@@ -97,14 +97,13 @@ if (!doNotTrack) {
 <blockquote>
 <ul>
 <li>运行 git log 命令查看提交日志,找到你需要回滚到的那次提交的commit ID(一串SHA-1哈希值)。</li>
-<li>拷贝该commit Id，然后执行
-git checkout &lt;commit_id&gt; path/to/file<br>
+<li>拷贝该commit Id，然后执行<code>git checkout &lt;commit_id&gt; path/to/file</code><br>
 这条命令会从指定的提交中将文件内容复制到你当前的工作区。</li>
 <li>运行 git status 你会看到该文件已被修改。可以使用
 git diff 查看与当前版本的差异。如果文件内容正确，可以暂存并
 提交改动&gt; 来保存恢复的文件</li>
 <li>后续再执行git commit等操作即可重新</li>
-<li>如果觉得不需要保留该文件,直接运行 <code>git checkout --  path/to/file</code>就可以从暂存区中撤销对该文件的改动。</li>
+<li>如果觉得不需要保留该文件,直接运行 <code>git checkout -- path/to/file</code>就可以从暂存区中撤销对该文件的改动。</li>
 </ul>
 </blockquote>
 </blockquote>
