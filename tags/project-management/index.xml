@@ -8,4 +8,19 @@
 &lt;li>&lt;a href="#%e6%96%87%e6%a1%a3%e5%92%8c%e6%b2%9f%e9%80%9a">文档和沟通&lt;/a>&lt;/li>
 &lt;li>&lt;a href="#%e6%9c%80%e4%bd%b3%e5%ae%9e%e8%b7%b5%e5%92%8c%e6%b3%a8%e6%84%8f%e4%ba%8b%e9%a1%b9">最佳实践和注意事项&lt;/a>&lt;/li>
 &lt;/ol>
-&lt;h2 id="简介" class="relative group">简介 &lt;span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100">&lt;a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style="text-decoration-line: none !important;" href="#%e7%ae%80%e4%bb%8b" aria-label="Anchor">#&lt;/a>&lt;/span>&lt;/h2>&lt;p>在没有高级 GitHub 功能的私有仓库中进行协同开发可能具有挑战性，但通过正确的实践和工具，我们可以建立一个高效、安全的开发环境。本指南总结了我们讨论的主要策略和技术。&lt;/p></description></item></channel></rss>
+&lt;h2 id="简介" class="relative group">简介 &lt;span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100">&lt;a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style="text-decoration-line: none !important;" href="#%e7%ae%80%e4%bb%8b" aria-label="Anchor">#&lt;/a>&lt;/span>&lt;/h2>&lt;p>在没有高级 GitHub 功能的私有仓库中进行协同开发可能具有挑战性，但通过正确的实践和工具，我们可以建立一个高效、安全的开发环境。本指南总结了我们讨论的主要策略和技术。&lt;/p>
+&lt;h2 id="仓库结构和分支策略" class="relative group">仓库结构和分支策略 &lt;span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100">&lt;a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style="text-decoration-line: none !important;" href="#%e4%bb%93%e5%ba%93%e7%bb%93%e6%9e%84%e5%92%8c%e5%88%86%e6%94%af%e7%ad%96%e7%95%a5" aria-label="Anchor">#&lt;/a>&lt;/span>&lt;/h2>&lt;ul>
+&lt;li>&lt;strong>主分支&lt;/strong>：&lt;code>main&lt;/code>（稳定、可部署的代码）&lt;/li>
+&lt;li>&lt;strong>开发分支&lt;/strong>：&lt;code>main_for_dev&lt;/code>（日常开发工作）&lt;/li>
+&lt;li>&lt;strong>特性分支&lt;/strong>：从 &lt;code>main_for_dev&lt;/code> 分出，用于开发新功能&lt;/li>
+&lt;/ul>
+&lt;p>工作流程：&lt;/p>
+&lt;ol>
+&lt;li>从 &lt;code>main_for_dev&lt;/code> 创建特性分支&lt;/li>
+&lt;li>在特性分支上开发&lt;/li>
+&lt;li>完成后，创建 Pull Request 到 &lt;code>main_for_dev&lt;/code>&lt;/li>
+&lt;li>代码审查和测试&lt;/li>
+&lt;li>合并到 &lt;code>main_for_dev&lt;/code>&lt;/li>
+&lt;li>定期将 &lt;code>main_for_dev&lt;/code> 合并到 &lt;code>main&lt;/code>&lt;/li>
+&lt;/ol>
+&lt;h2 id="协作者权限管理" class="relative group">协作者权限管理 &lt;span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100">&lt;a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style="text-decoration-line: none !important;" href="#%e5%8d%8f%e4%bd%9c%e8%80%85%e6%9d%83%e9%99%90%e7%ae%a1%e7%90%86" aria-label="Anchor">#&lt;/a>&lt;/span>&lt;/h2>&lt;p>GitHub 私有仓库提供以下权限级别：&lt;/p></description></item></channel></rss>
