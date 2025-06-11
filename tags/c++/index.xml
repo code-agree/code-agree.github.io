@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?><rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>C++ on Yu's Space</title><link>https://code-agree.github.io/tags/c++/</link><description>Recent content in C++ on Yu's Space</description><generator>Hugo</generator><language>en</language><lastBuildDate>Wed, 11 Jun 2025 17:54:19 +0800</lastBuildDate><atom:link href="https://code-agree.github.io/tags/c++/index.xml" rel="self" type="application/rss+xml"/><item><title>深入理解无锁队列：从原理到实践的完整指南</title><link>https://code-agree.github.io/blog/lock_free_queue/</link><pubDate>Wed, 11 Jun 2025 17:54:19 +0800</pubDate><guid>https://code-agree.github.io/blog/lock_free_queue/</guid><description>&lt;h2 id="目录" class="relative group">目录 &lt;span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100">&lt;a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style="text-decoration-line: none !important;" href="#%e7%9b%ae%e5%bd%95" aria-label="Anchor">#&lt;/a>&lt;/span>&lt;/h2>&lt;ol>
+&lt;li>&lt;a href="#why-lockfree">为什么需要无锁队列？&lt;/a>&lt;/li>
+&lt;li>&lt;a href="#hardware-basics">硬件基础：理解现代CPU的行为&lt;/a>&lt;/li>
+&lt;li>&lt;a href="#memory-ordering">内存序：无锁编程的核心武器&lt;/a>&lt;/li>
+&lt;li>&lt;a href="#spsc-queue">SPSC队列：最简单的无锁实现&lt;/a>&lt;/li>
+&lt;li>&lt;a href="#advanced-queues">进阶：多生产者多消费者的挑战&lt;/a>&lt;/li>
+&lt;li>&lt;a href="#performance-analysis">性能分析与最佳实践&lt;/a>&lt;/li>
+&lt;li>&lt;a href="#practical-guide">实际应用场景与选择指南&lt;/a>&lt;/li>
+&lt;/ol>
+&lt;hr>
+&lt;h2 id="why-lockfree" class="relative group">1. 为什么需要无锁队列？ &lt;span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100">&lt;a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style="text-decoration-line: none !important;" href="#why-lockfree" aria-label="Anchor">#&lt;/a>&lt;/span>&lt;/h2>&lt;h3 id="传统锁机制的痛点" class="relative group">传统锁机制的痛点 &lt;span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100">&lt;a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style="text-decoration-line: none !important;" href="#%e4%bc%a0%e7%bb%9f%e9%94%81%e6%9c%ba%e5%88%b6%e7%9a%84%e7%97%9b%e7%82%b9" aria-label="Anchor">#&lt;/a>&lt;/span>&lt;/h3>&lt;p>想象一个高频交易系统，每秒需要处理数百万笔订单。传统的基于锁的队列会带来什么问题？&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-cpp" data-lang="cpp">&lt;span class="line">&lt;span class="cl">&lt;span class="c1">// 传统锁机制的队列
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span>&lt;span class="k">class&lt;/span> &lt;span class="nc">ThreadSafeQueue&lt;/span> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">std&lt;/span>&lt;span class="o">::&lt;/span>&lt;span class="n">mutex&lt;/span> &lt;span class="n">mtx&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">std&lt;/span>&lt;span class="o">::&lt;/span>&lt;span class="n">queue&lt;/span>&lt;span class="o">&amp;lt;&lt;/span>&lt;span class="n">Order&lt;/span>&lt;span class="o">&amp;gt;&lt;/span> &lt;span class="n">orders&lt;/span>&lt;span class="p">;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> 
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="k">public&lt;/span>&lt;span class="o">:&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="kt">void&lt;/span> &lt;span class="n">push&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">Order&lt;/span> &lt;span class="n">order&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">std&lt;/span>&lt;span class="o">::&lt;/span>&lt;span class="n">lock_guard&lt;/span>&lt;span class="o">&amp;lt;&lt;/span>&lt;span class="n">std&lt;/span>&lt;span class="o">::&lt;/span>&lt;span class="n">mutex&lt;/span>&lt;span class="o">&amp;gt;&lt;/span> &lt;span class="n">lock&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">mtx&lt;/span>&lt;span class="p">);&lt;/span> &lt;span class="c1">// 可能阻塞！
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="n">orders&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="n">push&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">order&lt;/span>&lt;span class="p">);&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> 
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">Order&lt;/span> &lt;span class="nf">pop&lt;/span>&lt;span class="p">()&lt;/span> &lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">std&lt;/span>&lt;span class="o">::&lt;/span>&lt;span class="n">lock_guard&lt;/span>&lt;span class="o">&amp;lt;&lt;/span>&lt;span class="n">std&lt;/span>&lt;span class="o">::&lt;/span>&lt;span class="n">mutex&lt;/span>&lt;span class="o">&amp;gt;&lt;/span> &lt;span class="n">lock&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">mtx&lt;/span>&lt;span class="p">);&lt;/span> &lt;span class="c1">// 可能阻塞！
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="c1">// ... 取数据
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">&lt;/span> &lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">};&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>&lt;strong>核心问题&lt;/strong>：&lt;/p>
+&lt;ul>
+&lt;li>&lt;strong>上下文切换开销&lt;/strong>：线程阻塞时需要保存/恢复CPU状态&lt;/li>
+&lt;li>&lt;strong>锁竞争&lt;/strong>：多个线程同时访问时，只有一个能获得锁&lt;/li>
+&lt;li>&lt;strong>优先级反转&lt;/strong>：高优先级线程可能被低优先级线程阻塞&lt;/li>
+&lt;li>&lt;strong>不可预测的延迟&lt;/strong>：延迟取决于锁的竞争情况&lt;/li>
+&lt;/ul>
+&lt;h3 id="无锁编程的承诺" class="relative group">无锁编程的承诺 &lt;span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100">&lt;a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style="text-decoration-line: none !important;" href="#%e6%97%a0%e9%94%81%e7%bc%96%e7%a8%8b%e7%9a%84%e6%89%bf%e8%af%ba" aria-label="Anchor">#&lt;/a>&lt;/span>&lt;/h3>&lt;p>无锁编程通过&lt;strong>原子操作&lt;/strong>和&lt;strong>精心设计的算法&lt;/strong>，让多个线程能够&lt;strong>无阻塞地协作&lt;/strong>：&lt;/p></description></item></channel></rss>
