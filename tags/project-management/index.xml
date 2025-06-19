@@ -1,26 +1,8 @@
-<?xml version="1.0" encoding="utf-8" standalone="yes"?><rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>Project Management on Yu's Space</title><link>https://code-agree.github.io/tags/project-management/</link><description>Recent content in Project Management on Yu's Space</description><generator>Hugo</generator><language>en</language><lastBuildDate>Wed, 16 Oct 2024 02:04:51 +0800</lastBuildDate><atom:link href="https://code-agree.github.io/tags/project-management/index.xml" rel="self" type="application/rss+xml"/><item><title>GitHub私有仓库协同开发指南</title><link>https://code-agree.github.io/blog/project_manage/</link><pubDate>Wed, 16 Oct 2024 02:04:51 +0800</pubDate><guid>https://code-agree.github.io/blog/project_manage/</guid><description>&lt;h2 id="目录" class="relative group">目录 &lt;span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100">&lt;a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style="text-decoration-line: none !important;" href="#%e7%9b%ae%e5%bd%95" aria-label="Anchor">#&lt;/a>&lt;/span>&lt;/h2>&lt;ol>
-&lt;li>&lt;a href="#%e7%ae%80%e4%bb%8b">简介&lt;/a>&lt;/li>
-&lt;li>&lt;a href="#%e4%bb%93%e5%ba%93%e7%bb%93%e6%9e%84%e5%92%8c%e5%88%86%e6%94%af%e7%ad%96%e7%95%a5">仓库结构和分支策略&lt;/a>&lt;/li>
-&lt;li>&lt;a href="#%e5%8d%8f%e4%bd%9c%e8%80%85%e6%9d%83%e9%99%90%e7%ae%a1%e7%90%86">协作者权限管理&lt;/a>&lt;/li>
-&lt;li>&lt;a href="#%e4%bf%9d%e6%8a%a4%e4%b8%bb%e5%88%86%e6%94%af">保护主分支&lt;/a>&lt;/li>
-&lt;li>&lt;a href="#pull-request-%e5%92%8c%e4%bb%a3%e7%a0%81%e5%ae%a1%e6%9f%a5%e6%b5%81%e7%a8%8b">Pull Request 和代码审查流程&lt;/a>&lt;/li>
-&lt;li>&lt;a href="#%e6%8c%81%e7%bb%ad%e9%9b%86%e6%88%90%e4%b8%8e%e9%83%a8%e7%bd%b2-cicd">持续集成与部署 (CI/CD)&lt;/a>&lt;/li>
-&lt;li>&lt;a href="#%e6%96%87%e6%a1%a3%e5%92%8c%e6%b2%9f%e9%80%9a">文档和沟通&lt;/a>&lt;/li>
-&lt;li>&lt;a href="#%e6%9c%80%e4%bd%b3%e5%ae%9e%e8%b7%b5%e5%92%8c%e6%b3%a8%e6%84%8f%e4%ba%8b%e9%a1%b9">最佳实践和注意事项&lt;/a>&lt;/li>
-&lt;/ol>
-&lt;h2 id="简介" class="relative group">简介 &lt;span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100">&lt;a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style="text-decoration-line: none !important;" href="#%e7%ae%80%e4%bb%8b" aria-label="Anchor">#&lt;/a>&lt;/span>&lt;/h2>&lt;p>在没有高级 GitHub 功能的私有仓库中进行协同开发可能具有挑战性，但通过正确的实践和工具，我们可以建立一个高效、安全的开发环境。本指南总结了我们讨论的主要策略和技术。&lt;/p>
-&lt;h2 id="仓库结构和分支策略" class="relative group">仓库结构和分支策略 &lt;span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100">&lt;a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style="text-decoration-line: none !important;" href="#%e4%bb%93%e5%ba%93%e7%bb%93%e6%9e%84%e5%92%8c%e5%88%86%e6%94%af%e7%ad%96%e7%95%a5" aria-label="Anchor">#&lt;/a>&lt;/span>&lt;/h2>&lt;ul>
-&lt;li>&lt;strong>主分支&lt;/strong>：&lt;code>main&lt;/code>（稳定、可部署的代码）&lt;/li>
-&lt;li>&lt;strong>开发分支&lt;/strong>：&lt;code>main_for_dev&lt;/code>（日常开发工作）&lt;/li>
-&lt;li>&lt;strong>特性分支&lt;/strong>：从 &lt;code>main_for_dev&lt;/code> 分出，用于开发新功能&lt;/li>
-&lt;/ul>
-&lt;p>工作流程：&lt;/p>
-&lt;ol>
-&lt;li>从 &lt;code>main_for_dev&lt;/code> 创建特性分支&lt;/li>
-&lt;li>在特性分支上开发&lt;/li>
-&lt;li>完成后，创建 Pull Request 到 &lt;code>main_for_dev&lt;/code>&lt;/li>
-&lt;li>代码审查和测试&lt;/li>
-&lt;li>合并到 &lt;code>main_for_dev&lt;/code>&lt;/li>
-&lt;li>定期将 &lt;code>main_for_dev&lt;/code> 合并到 &lt;code>main&lt;/code>&lt;/li>
-&lt;/ol>
-&lt;h2 id="协作者权限管理" class="relative group">协作者权限管理 &lt;span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100">&lt;a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style="text-decoration-line: none !important;" href="#%e5%8d%8f%e4%bd%9c%e8%80%85%e6%9d%83%e9%99%90%e7%ae%a1%e7%90%86" aria-label="Anchor">#&lt;/a>&lt;/span>&lt;/h2>&lt;p>GitHub 私有仓库提供以下权限级别：&lt;/p></description></item></channel></rss>
+<?xml version="1.0" encoding="utf-8" standalone="yes"?><rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>project management on Yu's Space</title><link>https://code-agree.github.io/tags/project-management/</link><description>Recent content in project management on Yu's Space</description><generator>Hugo -- gohugo.io</generator><language>en</language><lastBuildDate>Wed, 16 Oct 2024 02:04:51 +0800</lastBuildDate><atom:link href="https://code-agree.github.io/tags/project-management/index.xml" rel="self" type="application/rss+xml"/><item><title>GitHub私有仓库协同开发指南</title><link>https://code-agree.github.io/blog/project_manage/</link><pubDate>Wed, 16 Oct 2024 02:04:51 +0800</pubDate><guid>https://code-agree.github.io/blog/project_manage/</guid><description>目录 # 简介 仓库结构和分支策略 协作者权限管理 保护主分支 Pull Request 和代码审查流程 持续集成与部署 (CI/CD) 文档和沟通 最佳实践和注意事项 简介 #在没有高级 GitHub 功能的私有仓库中进行协同开发可能具有挑战性，但通过正确的实践和工具，我们可以建立一个高效、安全的开发环境。本指南总结了我们讨论的主要策略和技术。
+仓库结构和分支策略 # 主分支：main（稳定、可部署的代码） 开发分支：main_for_dev（日常开发工作） 特性分支：从 main_for_dev 分出，用于开发新功能 工作流程：
+从 main_for_dev 创建特性分支 在特性分支上开发 完成后，创建 Pull Request 到 main_for_dev 代码审查和测试 合并到 main_for_dev 定期将 main_for_dev 合并到 main 协作者权限管理 #GitHub 私有仓库提供以下权限级别：
+Read Triage Write Maintain Admin 设置步骤：
+进入仓库 &amp;ldquo;Settings&amp;rdquo; &amp;gt; &amp;ldquo;Collaborators and teams&amp;rdquo; 点击 &amp;ldquo;Add people&amp;rdquo; 或 &amp;ldquo;Add teams&amp;rdquo; 输入用户名并选择适当的权限级别 最佳实践：
+遵循最小权限原则 定期审查和更新权限 保护主分支 #由于缺乏高级分支保护功能，我们采用以下策略：
+团队约定：
+禁止直接推送到 main 分支 所有更改通过 PR 进行 Git Hooks： 创建 pre-push hook（.</description></item></channel></rss>
