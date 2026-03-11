@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?><rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>Linux on Yu's Space</title><link>https://code-agree.github.io/tags/linux/</link><description>Recent content in Linux on Yu's Space</description><generator>Hugo -- gohugo.io</generator><language>en</language><lastBuildDate>Thu, 15 Jan 2026 10:18:16 +0800</lastBuildDate><atom:link href="https://code-agree.github.io/tags/linux/index.xml" rel="self" type="application/rss+xml"/><item><title>段错误(SEGV)故障定位排查文档</title><link>https://code-agree.github.io/blog/2026-01-15-debug_procedure2/</link><pubDate>Thu, 15 Jan 2026 10:18:16 +0800</pubDate><guid>https://code-agree.github.io/blog/2026-01-15-debug_procedure2/</guid><description>📋 问题概述 #故障现象：panda_strategy-1.0.0 程序在运行过程中发生段错误(Segmentation Fault)，进程崩溃。
+崩溃时间：2026-01-15 01:04:11 CST
+崩溃进程：PID 2312019
+崩溃线程：adapter-poller[2312082]
+信号类型：SIGSEGV (Signal 11)
+🔍 排查步骤 #1. 确认崩溃信息 #1.1 使用 coredumpctl 获取崩溃基本信息 #coredumpctl info 2312019 输出结果：
+PID: 2312019 (panda_strategy-) UID: 1000 (jason) GID: 1000 (jason) Signal: 11 (SEGV) Timestamp: Thu 2026-01-15 01:04:11 CST (7h ago) Command Line: ./panda_strategy-1.0.0 Executable: /home/jason/panda/panda-strategy/Strategy/out/build/wsl-profile/panda_strategy-1.0.0 Storage: none Message: Process 2312019 (panda_strategy-) of user 1000 dumped core. 关键信息：
+✅ 确认崩溃时间：2026-01-15 01:04:11 CST ⚠️ Storage: none - 核心转储文件未保存，但可以尝试其他方法分析 1.</description></item><item><title>Linux Coredump 调试完整指南</title><link>https://code-agree.github.io/blog/2026-01-15-debug_procedure/</link><pubDate>Thu, 15 Jan 2026 10:05:34 +0800</pubDate><guid>https://code-agree.github.io/blog/2026-01-15-debug_procedure/</guid><description>目录 # 概述 Coredump 生成机制 环境检查与配置 Coredump 文件定位 使用 GDB 分析 Coredump 实战案例分析 最佳实践与故障排查 概述 #当 Linux 进程因段错误（SIGSEGV）、总线错误（SIGBUS）等信号异常终止时，系统可以生成 coredump 文件，记录进程崩溃时的完整内存状态。通过分析 coredump，我们可以准确定位崩溃原因，包括：
+崩溃时的函数调用栈（Stack Trace） 局部变量和全局变量的值 内存布局和寄存器状态 崩溃发生的精确代码位置 本文档提供一套完整的 coredump 调试流程，从环境配置到深度分析，帮助开发者快速定位和解决程序崩溃问题。
+Coredump 生成机制 #2.1 系统级配置：core_pattern #Linux 内核通过 /proc/sys/kernel/core_pattern 控制 coredump 的生成方式：
+# 查看当前配置 cat /proc/sys/kernel/core_pattern 常见配置模式：
+传统模式：直接生成 core 文件
+core 在当前工作目录生成名为 core 的文件。
+Systemd-coredump 模式（现代 Linux 发行版默认）：
+|/usr/lib/systemd/systemd-coredump %P %u %g %s %t %c %h %e 由 systemd-coredump 服务统一管理，提供压缩、存储和查询功能。
+自定义路径模式：
+/var/crash/core.%e.%p.%t 生成到指定目录，文件名包含可执行文件名、PID 和时间戳。</description></item><item><title>Linux系统负载定位与分析实战指南</title><link>https://code-agree.github.io/blog/2025-12-04-cpu_debug/</link><pubDate>Thu, 04 Dec 2025 23:27:01 +0800</pubDate><guid>https://code-agree.github.io/blog/2025-12-04-cpu_debug/</guid><description>前言 #在高性能计算场景（如HFT交易系统、实时数据处理等）中，系统负载的精确定位至关重要。本文通过一个真实的系统负载分析案例，系统性地介绍如何使用Linux性能分析工具链，从表面现象深入到根本原因。
+本文涉及的工具链 # htop/top: 实时系统资源概览 vmstat: 系统级性能统计 pidstat: 进程级性能分析 其他辅助工具: /proc文件系统、perf、strace等 第一阶段：初步观察 - htop #工具介绍 #htop是top的增强版本，提供彩色、交互式的系统监控界面。相比top，它更直观地展示：
+每个CPU核心的使用率 进程/线程列表 内存和Swap使用情况 Load Average（负载平均值） 关键指标解读 #CPU使用率分布 #CPU 0-15: |||||||||||||||||| 100.0% 解读要点：
+每核心独立显示：现代多核系统必须分核心观察
+颜色含义（通常）：
+绿色：用户态进程（user space） 红色：内核态（kernel/system） 蓝色：低优先级进程（nice） 黄色：IRQ（硬件中断） 品红：Soft IRQ（软中断） 灰色：IO Wait 青色：Steal（虚拟化环境） 异常模式识别：
+全核心100%：CPU密集型负载，可能是正常业务或失控进程 某些核心100%，其他空闲：不均衡的线程分配或CPU亲和性设置 高IO Wait（灰色）：存储瓶颈 高Soft IRQ（品红）：网络包处理压力大 Load Average深度解析 #Load average: 13.08, 13.23, 12.62 常见误区：Load Average ≠ CPU使用率
+Load Average的真实含义：
+处于以下状态的进程/线程数量的时间加权平均值：
+R状态（Running/Runnable）：正在运行或等待CPU D状态（Uninterruptible Sleep）：不可中断睡眠（通常等待I/O） 三个数字的含义：
+第一个：1分钟平均 第二个：5分钟平均 第三个：15分钟平均 解读规则：</description></item><item><title>strace 完全使用指南</title><link>https://code-agree.github.io/blog/2025-07-03-strace/</link><pubDate>Thu, 03 Jul 2025 05:00:56 +0800</pubDate><guid>https://code-agree.github.io/blog/2025-07-03-strace/</guid><description>strace 完全使用指南 #目录 # strace 简介 基础语法 核心参数详解 过滤和跟踪选项 输出格式控制 性能分析参数 实用场景示例 输出解读指南 性能调优技巧 最佳实践 1. strace 简介 #1.1 什么是 strace #strace 是 Linux 系统下的系统调用跟踪工具，它可以：
+监控进程执行的所有系统调用 显示系统调用的参数和返回值 统计系统调用的执行时间和频率 跟踪信号传递过程 分析程序的系统级行为 1.2 主要用途 #性能分析 → 找出系统调用瓶颈 故障排查 → 定位程序异常原因 安全审计 → 监控程序系统访问 逆向分析 → 理解程序运行机制 系统调优 → 优化系统调用使用 2. 基础语法 #2.1 命令格式 ## 基础语法 strace [选项] [命令] strace [选项] -p &amp;lt;进程ID&amp;gt; # 示例 strace ls /tmp # 跟踪 ls 命令 strace -p 1234 # 跟踪进程ID为1234的进程 strace -e trace=network curl baidu.</description></item><item><title>Perf Report 分析完全指南 - 高频交易系统性能优化</title><link>https://code-agree.github.io/blog/2025-06-18-how_to_use_perf/</link><pubDate>Wed, 18 Jun 2025 03:03:07 +0800</pubDate><guid>https://code-agree.github.io/blog/2025-06-18-how_to_use_perf/</guid><description>目录 # 高频交易系统性能优化思路 Perf 基础知识 perf record 命令参数详解 采样事件类型 Perf 能分析的关键指标 Perf Report 输出解析 列含义详解 分析方法论 高级分析技巧 实际优化流程 关键指标解读 使用Perf分析内存性能指标 高频交易系统案例分析 高频交易系统性能优化思路 #在高频交易系统中，微秒级的延迟差异可能直接影响交易策略的有效性和盈利能力。使用perf进行性能分析是优化高频交易系统的关键步骤。以下是一个系统化的优化思路：
+1. 性能基准建立 #关键指标:
+端到端延迟: 从行情接收到下单的完整路径时间 吞吐量: 每秒处理的订单/行情数量 尾延迟: 95/99/99.9百分位延迟 CPU利用率: 核心交易路径的CPU使用情况 # 建立基准性能数据 perf stat -e cycles,instructions,cache-references,cache-misses,branches,branch-misses -o perf_base.data -a -g ./strategyTrade 命令参数解释:
+cycles: CPU周期数，用于测量程序执行所需的处理器周期总量 instructions: 执行的指令数，结合cycles可计算IPC(每周期指令数)，评估CPU利用效率 cache-references: 缓存访问次数，表示程序对CPU缓存的总访问量 cache-misses: 缓存未命中次数，高缓存未命中率会导致处理器等待内存，增加延迟 branches: 分支指令执行次数，反映程序中条件判断和跳转的频率 branch-misses: 分支预测失败次数，高失败率会导致流水线刷新，降低CPU效率 -o: 指定输出文件名 -a: 收集所有CPU核心的数据，全系统视图 -g: 收集调用图信息，便于分析函数调用关系 输出示例及解读:
+Performance counter stats for &amp;#39;./strategyTrade&amp;#39;: 12,345,678,901 cycles # 总CPU周期数 24,680,046,512 instructions # 总指令数，指令/周期比约为2.</description></item><item><title>Fork机制详解：从基础到高级应用</title><link>https://code-agree.github.io/blog/2025-06-24-fork_system_call_analysis/</link><pubDate>Tue, 15 Oct 2024 02:45:13 +0800</pubDate><guid>https://code-agree.github.io/blog/2025-06-24-fork_system_call_analysis/</guid><description>1. 引言 #Fork是Unix/Linux系统中最基本也是最强大的系统调用之一。它允许一个进程创建一个新的进程,这个新进程是原进程的一个几乎完全相同的副本。本次技术分享将深入探讨fork机制,从基本概念到高级应用。
+2. Fork的基本原理 #2.1 什么是Fork #Fork是一个系统调用,用于创建一个新的进程。新进程（称为子进程）是调用进程（称为父进程）的一个几乎完全相同的副本。
+2.2 Fork的工作原理 #当一个进程调用fork时:
+系统会创建一个新的进程。 新进程是父进程的一个副本,包括代码段、数据段、堆栈等。 子进程获得父进程数据空间、堆和栈的副本。 父进程和子进程继续执行fork调用之后的代码。 2.3 Fork的返回值 #Fork调用会返回两次:
+在父进程中,返回子进程的PID。 在子进程中,返回0。 这允许程序区分父进程和子进程。
+pid_t pid = fork(); if (pid &amp;gt; 0) { printf(&amp;#34;父进程\n&amp;#34;); } else if (pid == 0) { printf(&amp;#34;子进程\n&amp;#34;); } else { perror(&amp;#34;fork失败&amp;#34;); exit(1); } 3. Fork的高级特性 #3.1 写时复制 (Copy-on-Write) #为了提高效率,现代操作系统使用&amp;quot;写时复制&amp;quot;技术:
+初始时,子进程与父进程共享同一物理内存。 只有当其中一个进程尝试修改内存时,才会创建该部分内存的副本。 这大大减少了fork的开销和内存使用。
+3.2 文件描述符的继承 #子进程继承父进程的文件描述符。这意味着:
+子进程可以访问父进程打开的文件。 父子进程共享文件偏移量。 int fd = open(&amp;#34;example.txt&amp;#34;, O_RDWR); if (fork() == 0) { // 子进程 write(fd, &amp;#34;Hello from child&amp;#34;, 16); } else { // 父进程 write(fd, &amp;#34;Hello from parent&amp;#34;, 17); } 3.</description></item></channel></rss>
