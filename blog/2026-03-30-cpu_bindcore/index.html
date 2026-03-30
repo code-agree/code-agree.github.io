@@ -1,0 +1,423 @@
+<!doctype html><html lang=en dir=ltr class=scroll-smooth data-default-appearance=light data-auto-appearance=true><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><meta name=theme-color content="rgb(255,255,255)"><title>低延迟系统的 CPU 核心规划：从 isolcpus 到 Busy Poll 的内核级实战 &#183; Yu's Space</title>
+<meta name=title content="低延迟系统的 CPU 核心规划：从 isolcpus 到 Busy Poll 的内核级实战 &#183; Yu's Space"><script type=text/javascript src=/js/appearance.min.8a082f81b27f3cb2ee528df0b0bdc39787034cf2cc34d4669fbc9977c929023c.js integrity="sha256-iggvgbJ/PLLuUo3wsL3Dl4cDTPLMNNRmn7yZd8kpAjw="></script><link type=text/css rel=stylesheet href=/css/main.bundle.min.082522985b9d96110f0c3ccb5a94a702d82e62aac41510fb092b696d287ac5aa.css integrity="sha256-CCUimFudlhEPDDzLWpSnAtguYqrEFRD7CStpbSh6xao="><script defer type=text/javascript id=script-bundle src=/js/main.bundle.min.224115d95321e7008c42d7cef4967237dae3442b508de128eb5ba1119c977750.js integrity="sha256-IkEV2VMh5wCMQtfO9JZyN9rjRCtQjeEo61uhEZyXd1A=" data-copy=Copy data-copied=Copied></script><meta name=description content="
+      以 192 核 Graviton3 + 加密货币行情系统为背景，深入讲解 CPU 隔离、Housekeeping 规划、中断与用户进程的核心分配、中断抢占机制，以及 Busy Poll 的内核实现原理。
+    "><link rel=canonical href=https://code-agree.github.io/blog/2026-03-30-cpu_bindcore/><link rel=apple-touch-icon sizes=180x180 href=/apple-touch-icon.png><link rel=icon type=image/png sizes=32x32 href=/favicon-32x32.png><link rel=icon type=image/png sizes=16x16 href=/favicon-16x16.png><link rel=manifest href=/site.webmanifest><meta property="og:title" content="低延迟系统的 CPU 核心规划：从 isolcpus 到 Busy Poll 的内核级实战"><meta property="og:description" content="以 192 核 Graviton3 + 加密货币行情系统为背景，深入讲解 CPU 隔离、Housekeeping 规划、中断与用户进程的核心分配、中断抢占机制，以及 Busy Poll 的内核实现原理。"><meta property="og:type" content="article"><meta property="og:url" content="https://code-agree.github.io/blog/2026-03-30-cpu_bindcore/"><meta property="article:section" content="blog"><meta property="article:published_time" content="2026-03-30T00:00:00+00:00"><meta property="article:modified_time" content="2026-03-30T00:00:00+00:00"><meta name=twitter:card content="summary"><meta name=twitter:title content="低延迟系统的 CPU 核心规划：从 isolcpus 到 Busy Poll 的内核级实战"><meta name=twitter:description content="以 192 核 Graviton3 + 加密货币行情系统为背景，深入讲解 CPU 隔离、Housekeeping 规划、中断与用户进程的核心分配、中断抢占机制，以及 Busy Poll 的内核实现原理。"><script type=application/ld+json>{"@context":"https://schema.org","@type":"Article","articleSection":"Blog","name":"低延迟系统的 CPU 核心规划：从 isolcpus 到 Busy Poll 的内核级实战","headline":"低延迟系统的 CPU 核心规划：从 isolcpus 到 Busy Poll 的内核级实战","description":"以 192 核 Graviton3 \u002b 加密货币行情系统为背景，深入讲解 CPU 隔离、Housekeeping 规划、中断与用户进程的核心分配、中断抢占机制，以及 Busy Poll 的内核实现原理。","abstract":"上一篇文章《从网线到策略引擎：Linux 网络收包全路径深度解析》解决的是\u0026quot;数据包怎么走\u0026quot;的问题——从物理层到用户态的七个阶段。本文解决的是\u0026quot;CPU 核心怎么分\u0026quot;的问题——在一个多核系统上，哪些核跑内核家务活、哪些核处理网卡中断、哪些核跑行情线程，以及为什么这样分配。\n一、问题的起点：能不能把所有核都 isolate 掉？ #在低延迟系统中，isolcpus 是最常见的核心隔离手段。它的作用是将指定的 CPU 从内核调度器的默认调度域中移除，使得普通进程不会被自动调度到这些核上，从而为延迟敏感的用户线程提供\u0026quot;干净\u0026quot;的执行环境。\n一个自然的想法是：既然隔离能减少干扰，那把所有核都隔离了，再手动把用户线程绑上去，岂不是最干净？\n这样做不合理，甚至可能导致系统无法正常运行。\n1.1 内核的\u0026quot;家务活\u0026quot;必须有人干 #Linux 系统的正常运行依赖大量内核线程和基础设施：\nksoftirqd\/N — 每个 CPU 上的软中断处理线程 kworker\/N:M — 工作队列线程（延迟工作、异步 I\/O 等） rcu_preempt — RCU 回调处理 migration\/N — 进程迁移 watchdog\/N — CPU 死锁检测 systemd (PID 1) — 用户空间初始化 sshd \/ journald — 基础系统服务 当你用 isolcpus=0-191 把所有 192 个核都隔离后，这些内核线程和系统服务没有任何核可以正常调度。较新的内核在启动早期会检查是否至少存在一个 housekeeping CPU，如果全部隔离，系统可能直接启动失败或行为异常。\n1.2 CPU 0 的特殊地位 #即使不全部隔离，把 CPU 0 隔离也需要格外小心。在 Linux 内核中，CPU 0 承担着特殊职责：\nBoot CPU：系统启动阶段的大量初始化逻辑绑定在 CPU 0 上执行，部分内核子系统硬编码依赖它。start_kernel() → rest_init() → kernel_init() 这条初始化链路始终在 CPU 0 上运行。","inLanguage":"en","url":"https:\/\/code-agree.github.io\/blog\/2026-03-30-cpu_bindcore\/","author":{"@type":"Person","name":"Wenjun Yu"},"copyrightYear":"2026","dateCreated":"2026-03-30T00:00:00\u002b00:00","datePublished":"2026-03-30T00:00:00\u002b00:00","dateModified":"2026-03-30T00:00:00\u002b00:00","keywords":["linux","kernel","networking","low-latency","performance"],"mainEntityOfPage":"true","wordCount":"2067"}</script><meta name=author content="Wenjun Yu"><link href=https://github.com/code-agree rel=me><link href=https://x.com/flight_from_ rel=me><link href=mailto:lineyua66@gmail.com rel=me></head><body class="m-auto flex h-screen max-w-7xl flex-col bg-neutral px-6 text-lg leading-7 text-neutral-900 sm:px-14 md:px-24 lg:px-32 dark:bg-neutral-800 dark:text-neutral"><div id=the-top class="absolute flex self-center"><a class="-translate-y-8 rounded-b-lg bg-primary-200 px-3 py-1 text-sm focus:translate-y-0 dark:bg-neutral-600" href=#main-content><span class="pe-2 font-bold text-primary-600 dark:text-primary-400">&darr;</span>Skip to main content</a></div><header class="py-6 font-semibold text-neutral-900 print:hidden sm:py-10 dark:text-neutral"><nav class="flex items-start justify-between sm:items-center"><div class="flex flex-row items-center"><a class="decoration-primary-500 hover:underline hover:decoration-2 hover:underline-offset-2" rel=me href=/>Yu&rsquo;s Space</a></div><ul class="flex list-none flex-col text-end sm:flex-row"><li class="group mb-1 sm:mb-0 sm:me-7 sm:last:me-0.5"><a href=/blog/ title=Blog><span class="decoration-primary-500 group-hover:underline group-hover:decoration-2 group-hover:underline-offset-2">Blog</span></a></li><li class="group mb-1 sm:mb-0 sm:me-7 sm:last:me-0.5"><a href=/projects/ title=Projects><span class="decoration-primary-500 group-hover:underline group-hover:decoration-2 group-hover:underline-offset-2">Projects</span></a></li><li class="group mb-1 sm:mb-0 sm:me-7 sm:last:me-0.5"><a href=/tags/ title=Tags><span class="decoration-primary-500 group-hover:underline group-hover:decoration-2 group-hover:underline-offset-2">Tags</span></a></li><li class="group mb-1 sm:mb-0 sm:me-7 sm:last:me-0.5"><a href=/about/ title="About Me"><span class="decoration-primary-500 group-hover:underline group-hover:decoration-2 group-hover:underline-offset-2">About</span></a></li><li class="group mb-1 sm:mb-0 sm:me-7 sm:last:me-0.5"><button id=search-button-1 title="Search (/)">
+<span class="group-dark:hover:text-primary-400 transition-colors group-hover:text-primary-600"><span class="icon relative inline-block px-1 align-text-bottom"><svg aria-hidden="true" focusable="false" data-prefix="fas" data-icon="search" class="svg-inline--fa fa-search fa-w-16" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentcolor" d="M505 442.7 405.3 343c-4.5-4.5-10.6-7-17-7H372c27.6-35.3 44-79.7 44-128C416 93.1 322.9.0 208 0S0 93.1.0 208s93.1 208 208 208c48.3.0 92.7-16.4 128-44v16.3c0 6.4 2.5 12.5 7 17l99.7 99.7c9.4 9.4 24.6 9.4 33.9.0l28.3-28.3c9.4-9.4 9.4-24.6.1-34zM208 336c-70.7.0-128-57.2-128-128 0-70.7 57.2-128 128-128 70.7.0 128 57.2 128 128 0 70.7-57.2 128-128 128z"/></svg></span></span><span class="decoration-primary-500 group-hover:underline group-hover:decoration-2 group-hover:underline-offset-2"></span></button></li></ul></nav></header><div class="relative flex grow flex-col"><main id=main-content class=grow><article><header class=max-w-4xl><h1 class="mb-8 mt-0 text-4xl font-extrabold text-neutral-900 dark:text-neutral">低延迟系统的 CPU 核心规划：从 isolcpus 到 Busy Poll 的内核级实战</h1><div class="mb-10 text-base text-neutral-500 dark:text-neutral-400 print:hidden"><div class="flex flex-row flex-wrap items-center"><time datetime="2026-03-30 00:00:00 +0000 UTC">30 March 2026</time><span class="px-2 text-primary-500">&#183;</span><span title="Reading time">10 mins</span></div></div></header><section class="prose mt-0 flex max-w-full flex-col dark:prose-invert lg:flex-row"><div class="min-h-0 min-w-0 max-w-4xl grow"><blockquote><p>上一篇文章<a href=/blog/2026-03-17-net_proc/>《从网线到策略引擎：Linux 网络收包全路径深度解析》</a>解决的是"数据包怎么走"的问题——从物理层到用户态的七个阶段。本文解决的是"CPU 核心怎么分"的问题——在一个多核系统上，哪些核跑内核家务活、哪些核处理网卡中断、哪些核跑行情线程，以及为什么这样分配。</p></blockquote><hr><h2 id=一问题的起点能不能把所有核都-isolate-掉 class="relative group">一、问题的起点：能不能把所有核都 isolate 掉？ <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#%e4%b8%80%e9%97%ae%e9%a2%98%e7%9a%84%e8%b5%b7%e7%82%b9%e8%83%bd%e4%b8%8d%e8%83%bd%e6%8a%8a%e6%89%80%e6%9c%89%e6%a0%b8%e9%83%bd-isolate-%e6%8e%89 aria-label=Anchor>#</a></span></h2><p>在低延迟系统中，<code>isolcpus</code> 是最常见的核心隔离手段。它的作用是将指定的 CPU 从内核调度器的默认调度域中移除，使得普通进程不会被自动调度到这些核上，从而为延迟敏感的用户线程提供"干净"的执行环境。</p><p>一个自然的想法是：既然隔离能减少干扰，那把所有核都隔离了，再手动把用户线程绑上去，岂不是最干净？</p><p><strong>这样做不合理，甚至可能导致系统无法正常运行。</strong></p><h3 id=11-内核的家务活必须有人干 class="relative group">1.1 内核的"家务活"必须有人干 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#11-%e5%86%85%e6%a0%b8%e7%9a%84%e5%ae%b6%e5%8a%a1%e6%b4%bb%e5%bf%85%e9%a1%bb%e6%9c%89%e4%ba%ba%e5%b9%b2 aria-label=Anchor>#</a></span></h3><p>Linux 系统的正常运行依赖大量内核线程和基础设施：</p><pre tabindex=0><code>ksoftirqd/N     — 每个 CPU 上的软中断处理线程
+kworker/N:M     — 工作队列线程（延迟工作、异步 I/O 等）
+rcu_preempt     — RCU 回调处理
+migration/N     — 进程迁移
+watchdog/N      — CPU 死锁检测
+systemd (PID 1) — 用户空间初始化
+sshd / journald — 基础系统服务
+</code></pre><p>当你用 <code>isolcpus=0-191</code> 把所有 192 个核都隔离后，这些内核线程和系统服务没有任何核可以正常调度。较新的内核在启动早期会检查是否至少存在一个 housekeeping CPU，如果全部隔离，系统可能直接启动失败或行为异常。</p><h3 id=12-cpu-0-的特殊地位 class="relative group">1.2 CPU 0 的特殊地位 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#12-cpu-0-%e7%9a%84%e7%89%b9%e6%ae%8a%e5%9c%b0%e4%bd%8d aria-label=Anchor>#</a></span></h3><p>即使不全部隔离，把 CPU 0 隔离也需要格外小心。在 Linux 内核中，CPU 0 承担着特殊职责：</p><p><strong>Boot CPU</strong>：系统启动阶段的大量初始化逻辑绑定在 CPU 0 上执行，部分内核子系统硬编码依赖它。<code>start_kernel()</code> → <code>rest_init()</code> → <code>kernel_init()</code> 这条初始化链路始终在 CPU 0 上运行。</p><p><strong>时钟基础设施</strong>：很多平台上 tick 广播（tick broadcast）和 clockevent 的校准默认在 CPU 0 上处理。ARM64 平台上，arch timer 的初始化与 CPU 0 绑定。</p><p><strong>不可迁移的内核线程</strong>：部分 per-cpu workqueue（<code>WQ_UNBOUND</code> 除外）、<code>ksoftirqd/0</code>、<code>migration/0</code> 等内核线程天然固定在 CPU 0 上，无法迁移到其他核。</p><p><strong>硬件中断的默认亲和性</strong>：很多中断在 <code>/proc/irq/*/smp_affinity</code> 中默认指向 CPU 0。如果 CPU 0 被用户线程占满，中断响应延迟会剧增。</p><h3 id=13-正确做法保留-housekeeping-核 class="relative group">1.3 正确做法：保留 Housekeeping 核 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#13-%e6%ad%a3%e7%a1%ae%e5%81%9a%e6%b3%95%e4%bf%9d%e7%95%99-housekeeping-%e6%a0%b8 aria-label=Anchor>#</a></span></h3><p>正确的实践是保留至少一个核（通常是 CPU 0）作为 housekeeping CPU，让内核线程、中断和系统服务运行在上面：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 假设 4 核系统 (CPU 0-3)</span>
+</span></span><span class=line><span class=cl><span class=c1># 保留 CPU 0 做 housekeeping，隔离 1-3 给用户线程</span>
+</span></span><span class=line><span class=cl><span class=nv>isolcpus</span><span class=o>=</span>1-3
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 更精细的控制（内核 4.15+）</span>
+</span></span><span class=line><span class=cl><span class=nv>isolcpus</span><span class=o>=</span>managed_irq,domain,1-3
+</span></span></code></pre></div><p>然后将用户线程绑到隔离核上：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>taskset -c <span class=m>1</span> ./your_thread_1
+</span></span><span class=line><span class=cl>taskset -c <span class=m>2</span> ./your_thread_2
+</span></span><span class=line><span class=cl>taskset -c <span class=m>3</span> ./your_thread_3
+</span></span></code></pre></div><hr><h2 id=二housekeeping-cpu-的负载规划 class="relative group">二、Housekeeping CPU 的负载规划 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#%e4%ba%8chousekeeping-cpu-%e7%9a%84%e8%b4%9f%e8%bd%bd%e8%a7%84%e5%88%92 aria-label=Anchor>#</a></span></h2><p>保留了 housekeeping 核之后，一个常见的追问是：能不能把一些普通的用户进程也绑到 housekeeping 核上？</p><p>可以，但要看量级。Housekeeping 核同时承载四类负载：</p><ol><li><strong>内核线程</strong>：<code>ksoftirqd</code>、<code>kworker</code>、<code>rcu</code>、<code>migration</code> 等</li><li><strong>系统服务</strong>：<code>systemd</code>、<code>sshd</code>、<code>journald</code>、<code>rsyslogd</code> 等</li><li><strong>硬件中断处理</strong>：默认的 IRQ affinity 通常指向 housekeeping 核</li><li><strong>你额外绑上去的用户进程</strong></li></ol><p>如果绑上去的用户进程是轻量级的（监控脚本、日志收集器），完全没问题。但如果是 CPU 密集型任务，就会和内核线程互相抢占：你的用户进程被 <code>ksoftirqd</code>、中断打断导致延迟抖动；内核线程得不到及时调度，可能引发网络收包延迟、RCU 回调积压甚至 watchdog 告警。</p><p><strong>评估 housekeeping 核余量的方法</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 查看 CPU 0 的实时负载</span>
+</span></span><span class=line><span class=cl>mpstat -P <span class=m>0</span> <span class=m>1</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 如果 idle 还有 70% 以上，说明还有余量</span>
+</span></span><span class=line><span class=cl><span class=c1># 如果中断和内核线程已经吃掉 30%+，就别再往上加了</span>
+</span></span></code></pre></div><p><strong>核心数量与策略的关系</strong>：</p><ul><li><strong>核少（4 核）</strong>：CPU 0 一个核做 housekeeping 勉强够用，但别堆重负载。</li><li><strong>核多（8 核以上）</strong>：建议留 2 个核做 housekeeping（比如 CPU 0 和 CPU 1），一个不够时另一个能分担。</li><li><strong>极多（192 核）</strong>：留 2-4 个核做 housekeeping 绰绰有余，剩余的核资源丰富到可以按业务功能精细划分。</li></ul><hr><h2 id=三网卡中断与用户进程两套独立的选核机制 class="relative group">三、网卡中断与用户进程：两套独立的选核机制 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#%e4%b8%89%e7%bd%91%e5%8d%a1%e4%b8%ad%e6%96%ad%e4%b8%8e%e7%94%a8%e6%88%b7%e8%bf%9b%e7%a8%8b%e4%b8%a4%e5%a5%97%e7%8b%ac%e7%ab%8b%e7%9a%84%e9%80%89%e6%a0%b8%e6%9c%ba%e5%88%b6 aria-label=Anchor>#</a></span></h2><p>理解了 housekeeping 核的规划后，下一个核心问题是：网卡中断和行情接收线程，各自在哪个核上运行？它们之间是什么关系？</p><h3 id=31-网卡中断的选核硬件决定 class="relative group">3.1 网卡中断的选核：硬件决定 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#31-%e7%bd%91%e5%8d%a1%e4%b8%ad%e6%96%ad%e7%9a%84%e9%80%89%e6%a0%b8%e7%a1%ac%e4%bb%b6%e5%86%b3%e5%ae%9a aria-label=Anchor>#</a></span></h3><p>网卡通过 MSI-X 机制向特定 CPU 投递中断。选哪个核由两层决定：</p><pre tabindex=0><code>第一层：硬件 RSS（Receive Side Scaling）
+  网卡根据数据包的五元组 (src_ip, dst_ip, src_port, dst_port, protocol)
+  做哈希 → 映射到某个 RX 队列 → 每个队列绑定一个 MSI-X 中断号
+
+第二层：中断亲和性
+  /proc/irq/&lt;IRQ&gt;/smp_affinity 决定这个中断号投递到哪个 CPU
+</code></pre><p>数据包在哪个核上被处理，由网卡硬件哈希和中断亲和性配置共同决定，和用户进程在哪个核上运行没有任何关系。</p><h3 id=32-用户进程的选核调度器决定 class="relative group">3.2 用户进程的选核：调度器决定 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#32-%e7%94%a8%e6%88%b7%e8%bf%9b%e7%a8%8b%e7%9a%84%e9%80%89%e6%a0%b8%e8%b0%83%e5%ba%a6%e5%99%a8%e5%86%b3%e5%ae%9a aria-label=Anchor>#</a></span></h3><p>用户进程跑在哪个核，由 CFS 调度器根据负载均衡决定，或者你用 <code>taskset</code> / <code>sched_setaffinity</code> 手动绑定。</p><p><strong>两者默认没有任何协调机制。</strong> 网卡中断可能在 CPU 5 上处理，而你的 WebSocket 行情线程可能在 CPU 80 上跑。这是一个很常见但往往被忽视的问题。</p><h3 id=33-网卡中断跟用户进程的关系 class="relative group">3.3 网卡中断跟用户进程的关系 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#33-%e7%bd%91%e5%8d%a1%e4%b8%ad%e6%96%ad%e8%b7%9f%e7%94%a8%e6%88%b7%e8%bf%9b%e7%a8%8b%e7%9a%84%e5%85%b3%e7%b3%bb aria-label=Anchor>#</a></span></h3><p>从数据依赖角度看，它们是<strong>生产者-消费者关系</strong>：</p><pre tabindex=0><code>网卡中断 (生产者)                    用户进程 (消费者)
+────────────────                    ────────────────
+硬中断 → 触发 NAPI
+NAPI poll → 从网卡 DMA ring
+读取数据包 → 分配 skb
+→ 走协议栈 (IP/TCP)
+→ 把数据放入 socket recv queue
+→ 唤醒阻塞在 recv/epoll 上的进程 ──→ 被唤醒，调用 recv() 取数据
+</code></pre><p>没有中断处理完成，用户进程拿不到数据。中断是数据进入用户态的必经之路（除非使用 busy poll 或 kernel bypass，后文详述）。</p><h3 id=34-为什么同核不会-cache-miss class="relative group">3.4 为什么同核不会 cache miss <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#34-%e4%b8%ba%e4%bb%80%e4%b9%88%e5%90%8c%e6%a0%b8%e4%b8%8d%e4%bc%9a-cache-miss aria-label=Anchor>#</a></span></h3><p>一个关键的优化决策是：中断处理和行情线程是放在同一个核上，还是分开放？</p><p>先看<strong>不同核</strong>的情况：</p><pre tabindex=0><code>CPU 5 (处理中断)                          CPU 80 (用户线程)
+┌─────────────────┐                      ┌─────────────────┐
+│ 硬中断触发       │                      │                 │
+│ NAPI poll 收包   │                      │                 │
+│ skb 分配并填充   │                      │                 │
+│ 协议栈处理       │                      │                 │
+│ 数据写入 socket  │                      │                 │
+│ buffer          │                      │                 │
+│                 │   ── 跨核访问 ──→     │ recv() 读取数据  │
+│ 此时 skb 数据    │   cache-to-cache     │ 数据不在本地cache│
+│ 在 CPU 5 的      │   transfer 延迟      │ 触发 cache miss  │
+│ L1/L2 cache 中  │                      │                 │
+└─────────────────┘                      └─────────────────┘
+</code></pre><p>跨核访问的代价，在 Graviton3（192 核，2 NUMA node）上：</p><ul><li><strong>同 NUMA node 内跨核</strong>：L2 miss → 走 L3 或 mesh interconnect，约 30-50ns</li><li><strong>跨 NUMA node</strong>：走 NUMA 互联，约 80-150ns</li></ul><p>再看<strong>同核</strong>的情况：</p><pre tabindex=0><code>CPU 5 (中断 + 用户线程都在这里)
+┌─────────────────────────────────┐
+│ 硬中断触发                       │
+│ NAPI poll → skb 数据写入 L1/L2  │
+│ 协议栈处理 → socket buffer      │
+│                                 │
+│ ... 中断返回 ...                 │
+│                                 │
+│ 用户线程 recv()                  │
+│ 读取 socket buffer              │
+│ 数据还在 L1/L2 cache 里         │  ← 命中，0 额外延迟
+│ 直接 cache hit                  │
+└─────────────────────────────────┘
+</code></pre><p>本质原因：<strong>中断处理和用户线程操作的是同一块内存</strong>——<code>struct sk_buff</code> 和 socket 的 receive queue。中断处理时把数据写进了这个核的 cache，用户线程紧接着读，数据还"热"在 cache 里。这不是巧合，而是因为它们是同一个数据结构的生产者和消费者。</p><h3 id=35-同核-vs-分离的取舍 class="relative group">3.5 同核 vs 分离的取舍 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#35-%e5%90%8c%e6%a0%b8-vs-%e5%88%86%e7%a6%bb%e7%9a%84%e5%8f%96%e8%88%8d aria-label=Anchor>#</a></span></h3><p>两种方案各有适用场景：</p><p><strong>同核方案</strong>（中断和行情线程绑同一个核）：</p><ul><li>优势：cache 局部性最优，数据零延迟传递</li><li>代价：中断处理会抢占用户线程的 CPU 时间</li><li>适用：中断频率不高（几千次/秒级别）、行情数据量不大的场景</li></ul><p><strong>分离方案</strong>（中断和行情线程绑不同核，但在同 NUMA / 同 L3 域内）：</p><ul><li>优势：用户线程不会被中断打断，执行更确定</li><li>代价：数据需要跨核传递，有 cache miss 代价（同 L3 域约 30ns）</li><li>适用：中断频率高、行情 burst 量大的场景</li></ul><p><strong>绝对不要做的事</strong>：中断核在 NUMA node 0，行情线程在 NUMA node 1。跨 NUMA 的 cache miss 代价远大于同 node 内的跨核传递。</p><hr><h2 id=四中断优先级与抢占机制 class="relative group">四、中断优先级与抢占机制 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#%e5%9b%9b%e4%b8%ad%e6%96%ad%e4%bc%98%e5%85%88%e7%ba%a7%e4%b8%8e%e6%8a%a2%e5%8d%a0%e6%9c%ba%e5%88%b6 aria-label=Anchor>#</a></span></h2><p>上一节提到"中断处理会抢占用户线程"，这里深入解释这个机制。</p><h3 id=41-linux-的中断优先级模型 class="relative group">4.1 Linux 的中断优先级模型 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#41-linux-%e7%9a%84%e4%b8%ad%e6%96%ad%e4%bc%98%e5%85%88%e7%ba%a7%e6%a8%a1%e5%9e%8b aria-label=Anchor>#</a></span></h3><pre tabindex=0><code>优先级从高到低：
+
+1. 硬中断 (hardirq)     ← 网卡中断在这里
+   无条件抢占一切，包括内核代码
+   不可被调度器控制
+   即使你的进程是 SCHED_FIFO 优先级 99 也会被打断
+
+2. 软中断 (softirq)     ← NAPI 收包在这里 (NET_RX_SOFTIRQ)
+   在硬中断返回时执行
+   或由 ksoftirqd 内核线程执行
+
+3. 内核态进程            ← 系统调用期间
+   可被中断抢占
+
+4. 用户态进程            ← 你的行情线程在这里
+   优先级最低
+</code></pre><h3 id=42-一次中断打断用户进程的完整过程 class="relative group">4.2 一次中断打断用户进程的完整过程 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#42-%e4%b8%80%e6%ac%a1%e4%b8%ad%e6%96%ad%e6%89%93%e6%96%ad%e7%94%a8%e6%88%b7%e8%bf%9b%e7%a8%8b%e7%9a%84%e5%ae%8c%e6%95%b4%e8%bf%87%e7%a8%8b aria-label=Anchor>#</a></span></h3><pre tabindex=0><code>你的行情线程正在 CPU 2 上执行策略计算
+          │
+          ▼
+网卡收到行情数据包，DMA 写入 Ring Buffer
+          │
+          ▼
+网卡通过 MSI-X 向 CPU 2 投递中断
+          │
+          ▼
+CPU 2 硬件级别响应：
+  1. 保存当前寄存器状态（用户线程的上下文）
+  2. 跳转到中断向量表
+  3. 执行网卡驱动的 hardirq handler
+     - 关闭该队列的中断（防止中断风暴）
+     - 调用 napi_schedule()，将 NAPI 挂到 softirq 待处理列表
+     - 整个过程约 1μs
+  4. 硬中断返回
+          │
+          ▼
+检查是否有 pending softirq → 有 (NET_RX_SOFTIRQ)
+  执行 NAPI poll：
+  - 从网卡 DMA ring 批量收包
+  - 每次最多收 budget 个包（默认 64）
+  - 走 IP/TCP 协议栈处理
+  - 将数据放入 socket recv queue
+  - 可能持续 几十μs 到几ms
+          │
+          ▼
+softirq 处理完毕
+恢复你的行情线程继续执行
+</code></pre><p><strong>你的线程被打断的时间 = hardirq 时间 + softirq 时间</strong>，通常在 5-100μs 级别，取决于一次收了多少包。需要注意的是，这个打断对用户线程而言是完全不可见、不可控的——你无法用 <code>SCHED_FIFO</code> 或任何调度策略来阻止硬中断。</p><hr><h2 id=五busy-poll-深度解析 class="relative group">五、Busy Poll 深度解析 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#%e4%ba%94busy-poll-%e6%b7%b1%e5%ba%a6%e8%a7%a3%e6%9e%90 aria-label=Anchor>#</a></span></h2><p>上文提到，中断是数据进入用户态的必经之路——&ldquo;除非使用 busy poll 或 kernel bypass&rdquo;。Busy poll 是低延迟系统中性价比最高的优化手段之一，但也是最容易被误解的概念。</p><h3 id=51-它不是-c-里的-busy-loop class="relative group">5.1 它不是 C++ 里的 busy loop <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#51-%e5%ae%83%e4%b8%8d%e6%98%af-c-%e9%87%8c%e7%9a%84-busy-loop aria-label=Anchor>#</a></span></h3><p>先澄清一个常见的混淆：<strong>内核 busy poll 和你在 C++ 代码里写的 busy loop 不是一回事。</strong></p><p>C++ 里的 busy loop 通常长这样：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// 典型的用户态 busy loop
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=k>while</span> <span class=p>(</span><span class=nb>true</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=kt>int</span> <span class=n>n</span> <span class=o>=</span> <span class=n>epoll_wait</span><span class=p>(</span><span class=n>epfd</span><span class=p>,</span> <span class=n>events</span><span class=p>,</span> <span class=n>MAX_EVENTS</span><span class=p>,</span> <span class=mi>0</span><span class=p>);</span>  <span class=c1>// 超时设为 0，非阻塞
+</span></span></span><span class=line><span class=cl><span class=c1></span>    <span class=k>if</span> <span class=p>(</span><span class=n>n</span> <span class=o>&gt;</span> <span class=mi>0</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=k>for</span> <span class=p>(</span><span class=kt>int</span> <span class=n>i</span> <span class=o>=</span> <span class=mi>0</span><span class=p>;</span> <span class=n>i</span> <span class=o>&lt;</span> <span class=n>n</span><span class=p>;</span> <span class=n>i</span><span class=o>++</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=n>recv</span><span class=p>(</span><span class=n>events</span><span class=p>[</span><span class=n>i</span><span class=p>].</span><span class=n>data</span><span class=p>.</span><span class=n>fd</span><span class=p>,</span> <span class=n>buf</span><span class=p>,</span> <span class=k>sizeof</span><span class=p>(</span><span class=n>buf</span><span class=p>),</span> <span class=mi>0</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>            <span class=n>process</span><span class=p>(</span><span class=n>buf</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>        <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 没数据也不睡觉，继续循环
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=p>}</span>
+</span></span></code></pre></div><p>这段代码在干什么？</p><pre tabindex=0><code>循环迭代 1：用户态 → syscall 进内核 → 检查 socket queue → 没数据 → 返回用户态 (EAGAIN)
+循环迭代 2：用户态 → syscall 进内核 → 检查 socket queue → 没数据 → 返回用户态 (EAGAIN)
+循环迭代 3：用户态 → syscall 进内核 → 检查 socket queue → 没数据 → 返回用户态 (EAGAIN)
+......
+循环迭代 N：用户态 → syscall 进内核 → 检查 socket queue → 有数据！→ 拷贝 → 返回用户态
+</code></pre><p>每次循环都经历一次完整的系统调用开销（用户态 → 内核态 → 用户态）。在 aarch64 上，一次 syscall 的开销约 0.5-1μs。</p><p><strong>最关键的问题是：数据是怎么进入 socket queue 的？</strong> 用户态 busy loop 只是不停地"查看"有没有数据，但数据从网卡到 socket queue 的过程<strong>仍然完全依赖中断驱动</strong>。你的 busy loop 对"网卡 → 内核协议栈 → socket queue"这段路径没有任何加速作用，它只是让你的线程不睡觉，能更快地发现"数据到了"。</p><h3 id=52-内核-busy-poll-做了什么 class="relative group">5.2 内核 busy poll 做了什么 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#52-%e5%86%85%e6%a0%b8-busy-poll-%e5%81%9a%e4%ba%86%e4%bb%80%e4%b9%88 aria-label=Anchor>#</a></span></h3><p>内核 busy poll 的本质完全不同：<strong>它让用户线程在调用 <code>recv()</code> / <code>epoll_wait()</code> 时，不睡眠等中断唤醒，而是在内核态主动轮询网卡收包。</strong></p><h4 id=没有-busy-poll-时的数据路径 class="relative group">没有 busy poll 时的数据路径 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#%e6%b2%a1%e6%9c%89-busy-poll-%e6%97%b6%e7%9a%84%e6%95%b0%e6%8d%ae%e8%b7%af%e5%be%84 aria-label=Anchor>#</a></span></h4><pre tabindex=0><code>用户线程调用 recv()
+      │
+      ▼
+内核检查 socket recv queue 有没有数据
+      │
+      ├── 有数据 → 拷贝到用户 buffer，返回
+      │
+      └── 没数据 → 把线程标记为 TASK_INTERRUPTIBLE
+                   放入 socket 的等待队列
+                   调用 schedule() 让出 CPU
+                   线程睡眠 💤
+                        │
+                   ......等待......
+                        │
+                   网卡收到数据包
+                   → 硬中断触发
+                   → softirq 执行 NAPI poll
+                   → 协议栈处理
+                   → 数据放入 socket recv queue
+                   → wake_up() 唤醒线程
+                        │
+                   调度器重新调度线程到某个 CPU
+                   线程醒来，读取数据，返回用户态
+</code></pre><p>这条路径的延迟分布：</p><pre tabindex=0><code>数据到达网卡 → 硬中断投递延迟        ~1-5μs
+→ softirq 调度延迟                   ~1-3μs
+→ 协议栈处理                         ~2-5μs
+→ wake_up 唤醒线程                   ~1-3μs
+→ 调度器选核 + 上下文切换             ~3-10μs
+→ 线程恢复执行                       ~1-2μs
+                               总计：约 10-30μs
+</code></pre><p>其中 <strong>&ldquo;睡眠 → 中断唤醒 → 重新调度&rdquo;</strong> 是最大的延迟来源。</p><h4 id=开启-busy-poll-后的数据路径 class="relative group">开启 busy poll 后的数据路径 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#%e5%bc%80%e5%90%af-busy-poll-%e5%90%8e%e7%9a%84%e6%95%b0%e6%8d%ae%e8%b7%af%e5%be%84 aria-label=Anchor>#</a></span></h4><pre tabindex=0><code>用户线程调用 recv()
+      │
+      ▼
+内核检查 socket recv queue 有没有数据
+      │
+      ├── 有数据 → 拷贝到用户 buffer，返回
+      │
+      └── 没数据 → 【关键区别】不睡眠！进入 busy poll 循环
+                        │
+                  ┌──── 循环体 ────────────────────────────┐
+                  │                                        │
+                  │  直接调用 napi_busy_loop()              │
+                  │  （跟 softirq 里调用的是同一个函数）      │
+                  │  主动从网卡 DMA ring 拉数据              │
+                  │       │                                │
+                  │       ├── 拉到了 → 走协议栈处理          │
+                  │       │   数据放入 socket recv queue     │
+                  │       │   跳出循环                      │
+                  │       │                                │
+                  │       └── 没拉到 → cpu_relax()          │
+                  │                   检查时间是否超限       │
+                  │                   没超 → 继续循环       │
+                  │                   超了 → 退出，走传统    │
+                  │                          睡眠路径       │
+                  └────────────────────────────────────────┘
+                        │
+                  拷贝数据到用户 buffer，返回用户态
+</code></pre><p>延迟对比：</p><pre tabindex=0><code>数据到达网卡 DMA ring
+→ busy poll 循环检测到数据              ~1-5μs（取决于轮询间隔）
+→ 直接在当前 CPU 上走协议栈处理         ~2-5μs
+→ 数据放入 socket recv queue
+→ 当前线程立刻读取，不需要唤醒          ~0μs
+→ 返回用户态
+                               总计：约 3-10μs
+</code></pre><p>省掉的就是"睡眠 → 中断 → 唤醒 → 重新调度"整个链路。</p><h3 id=53-busy-poll-在哪一层运行 class="relative group">5.3 Busy poll 在哪一层运行 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#53-busy-poll-%e5%9c%a8%e5%93%aa%e4%b8%80%e5%b1%82%e8%bf%90%e8%a1%8c aria-label=Anchor>#</a></span></h3><pre tabindex=0><code>┌─────────────────────────────────────────┐
+│           用户态 (User Space)            │
+│                                         │
+│   your_app:                             │
+│     fd = socket(...)                    │
+│     setsockopt(fd, SO_BUSY_POLL, 50)    │
+│     recv(fd, buf, len, 0)  ──────────┐  │
+│                                      │  │
+├──────────────── syscall ─────────────┼──┤
+│                                      │  │
+│           内核态 (Kernel Space)       │  │
+│                                      ▼  │
+│   sys_recvfrom()                        │
+│     → sock_recvmsg()                    │
+│       → tcp_recvmsg()                   │
+│         → sk_busy_loop()  ◄── 在这里spin│
+│           → napi_busy_loop()            │
+│             → 网卡驱动 poll 函数         │
+│               → 从 DMA ring 读数据      │
+│                                         │
+│   线程状态：TASK_RUNNING                 │
+│   位置：内核态                           │
+│   CPU：没有让出去                        │
+│   中断：没有关闭，但不需要中断来收包了     │
+└─────────────────────────────────────────┘
+</code></pre><p><strong>结论：busy poll 运行在内核态，但由用户线程的系统调用触发。</strong> 用户线程 <code>recv()</code> 进入内核后，不睡眠，而是在内核态 spin 调用 NAPI poll 主动收包。</p><h3 id=54-内核代码路径 class="relative group">5.4 内核代码路径 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#54-%e5%86%85%e6%a0%b8%e4%bb%a3%e7%a0%81%e8%b7%af%e5%be%84 aria-label=Anchor>#</a></span></h3><p>简化后的核心逻辑（<code>net/core/dev.c</code>）：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// 用户调 recv() 最终会走到这里
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=kt>int</span> <span class=nf>sk_busy_loop</span><span class=p>(</span><span class=k>struct</span> <span class=n>sock</span> <span class=o>*</span><span class=n>sk</span><span class=p>,</span> <span class=kt>int</span> <span class=n>nonblock</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=kt>unsigned</span> <span class=kt>long</span> <span class=n>end_time</span> <span class=o>=</span> <span class=nf>busy_loop_end_time</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=k>while</span> <span class=p>(</span><span class=o>!</span><span class=nf>skb_queue_empty_lockless</span><span class=p>(</span><span class=o>&amp;</span><span class=n>sk</span><span class=o>-&gt;</span><span class=n>sk_receive_queue</span><span class=p>)</span> <span class=o>==</span> <span class=nb>false</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>        <span class=c1>// 关键：直接调用 NAPI 的 poll 函数
+</span></span></span><span class=line><span class=cl><span class=c1></span>        <span class=c1>// 这跟 softirq 里收包调用的是同一个函数
+</span></span></span><span class=line><span class=cl><span class=c1></span>        <span class=c1>// 本质：用户线程替代了 ksoftirqd 的工作
+</span></span></span><span class=line><span class=cl><span class=c1></span>        <span class=nf>napi_busy_loop</span><span class=p>(</span><span class=n>sk</span><span class=o>-&gt;</span><span class=n>sk_napi_id</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>        <span class=k>if</span> <span class=p>(</span><span class=nf>skb_queue_empty_lockless</span><span class=p>(</span><span class=o>&amp;</span><span class=n>sk</span><span class=o>-&gt;</span><span class=n>sk_receive_queue</span><span class=p>)</span> <span class=o>==</span> <span class=nb>false</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>            <span class=k>break</span><span class=p>;</span>  <span class=c1>// 收到了，跳出
+</span></span></span><span class=line><span class=cl><span class=c1></span>
+</span></span><span class=line><span class=cl>        <span class=k>if</span> <span class=p>(</span><span class=nf>busy_loop_timeout</span><span class=p>(</span><span class=n>end_time</span><span class=p>))</span>
+</span></span><span class=line><span class=cl>            <span class=k>break</span><span class=p>;</span>  <span class=c1>// 超时了，退出 busy poll
+</span></span></span><span class=line><span class=cl><span class=c1></span>
+</span></span><span class=line><span class=cl>        <span class=c1>// 让出一点 CPU 资源（aarch64 上是 yield 指令）
+</span></span></span><span class=line><span class=cl><span class=c1></span>        <span class=c1>// 但不会让出 CPU 给调度器，线程还在跑
+</span></span></span><span class=line><span class=cl><span class=c1></span>        <span class=nf>cpu_relax</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></div><p>注意 <code>napi_busy_loop()</code> 这个调用——它直接调用了网卡驱动注册的 poll 函数，效果等同于 softirq 里的收包操作：</p><pre tabindex=0><code>没有 busy poll：
+  网卡中断 → softirq → napi_poll() → 收包 → 唤醒用户线程
+
+有 busy poll：
+  用户线程自己调 napi_poll() → 收包 → 直接拿到数据
+
+  中间没有中断，没有 softirq，没有睡眠唤醒
+</code></pre><h3 id=55-busy-poll-期间中断来了怎么办 class="relative group">5.5 Busy poll 期间中断来了怎么办 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#55-busy-poll-%e6%9c%9f%e9%97%b4%e4%b8%ad%e6%96%ad%e6%9d%a5%e4%ba%86%e6%80%8e%e4%b9%88%e5%8a%9e aria-label=Anchor>#</a></span></h3><p>Busy poll 期间 CPU 没有关闭中断。如果此时网卡硬中断到达：</p><pre tabindex=0><code>你的线程在 busy poll（内核态 spin）
+          │
+          ▼
+网卡中断到达
+          │
+          ▼
+CPU 硬件：保存状态 → 执行 hardirq handler
+  但是 NAPI 已经在 poll 模式了
+  hardirq handler 发现 NAPI 已经被调度
+  → 几乎什么都不做就返回（&lt; 1μs）
+          │
+          ▼
+恢复 busy poll 循环继续
+</code></pre><p>这就是 NAPI 的精髓：busy poll <strong>不是阻塞中断，而是让中断变得没有必要</strong>。NAPI 的状态机保证了同一个队列不会同时被中断和轮询两条路径处理。</p><h3 id=56-与-c-busy-loop-的本质对比 class="relative group">5.6 与 C++ busy loop 的本质对比 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#56-%e4%b8%8e-c-busy-loop-%e7%9a%84%e6%9c%ac%e8%b4%a8%e5%af%b9%e6%af%94 aria-label=Anchor>#</a></span></h3><pre tabindex=0><code>                   C++ busy loop              内核 busy poll
+                   ──────────────             ──────────────
+代码位置            用户态 while 循环          内核态 sk_busy_loop()
+
+谁触发收包          网卡中断 → softirq         用户线程在内核态
+                   → NAPI poll               直接调 NAPI poll
+
+syscall 次数        每次循环一次 syscall        一次 syscall 内完成
+                   没数据就白跑一趟            spin 等到数据再返回
+
+是否依赖中断         完全依赖                   不依赖
+                   中断把数据送到 queue         自己主动去网卡拉
+
+空转时在干嘛         用户态空转                  内核态轮询网卡
+                   什么有用的事都没干            在主动拉数据
+
+延迟                中断延迟 + 轮询间隔          只有轮询间隔
+                   ~10-30μs                   ~3-10μs
+</code></pre><p>用一个生活比喻来说明区别：</p><ul><li><strong>C++ busy loop</strong>：你每隔一秒跑到门口看快递到了没。快递员什么时候送到跟你无关，你只是反复检查。包裹到了放在门口（socket queue），你发现了就拿走。</li><li><strong>内核 busy poll</strong>：你直接站在快递分拣中心的传送带旁边。包裹一出现你就自己拿走，快递员（中断）都不需要上门了。</li></ul><h3 id=57-两者结合的正确姿势 class="relative group">5.7 两者结合的正确姿势 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#57-%e4%b8%a4%e8%80%85%e7%bb%93%e5%90%88%e7%9a%84%e6%ad%a3%e7%a1%ae%e5%a7%bf%e5%8a%bf aria-label=Anchor>#</a></span></h3><p>C++ busy loop 和内核 busy poll 并不互斥，实际上最常见的低延迟写法是两者叠加：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// 先开启内核 busy poll
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=kt>int</span> <span class=n>busy_poll_us</span> <span class=o>=</span> <span class=mi>50</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=n>setsockopt</span><span class=p>(</span><span class=n>fd</span><span class=p>,</span> <span class=n>SOL_SOCKET</span><span class=p>,</span> <span class=n>SO_BUSY_POLL</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>busy_poll_us</span><span class=p>,</span> <span class=k>sizeof</span><span class=p>(</span><span class=n>busy_poll_us</span><span class=p>));</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 然后用户态也 busy loop
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=k>while</span> <span class=p>(</span><span class=nb>true</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 这次 recv 进内核后，内核会先 busy poll 50μs
+</span></span></span><span class=line><span class=cl><span class=c1></span>    <span class=c1>// 如果 50μs 内网卡有数据，直接在内核态收完再返回
+</span></span></span><span class=line><span class=cl><span class=c1></span>    <span class=kt>int</span> <span class=n>ret</span> <span class=o>=</span> <span class=n>recv</span><span class=p>(</span><span class=n>fd</span><span class=p>,</span> <span class=n>buf</span><span class=p>,</span> <span class=k>sizeof</span><span class=p>(</span><span class=n>buf</span><span class=p>),</span> <span class=mi>0</span><span class=p>);</span>  <span class=c1>// 可以用阻塞模式
+</span></span></span><span class=line><span class=cl><span class=c1></span>    <span class=k>if</span> <span class=p>(</span><span class=n>ret</span> <span class=o>&gt;</span> <span class=mi>0</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>process</span><span class=p>(</span><span class=n>buf</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></div><p>这样就是两层加速叠加：内核层面绕过中断主动收包，用户层面不做无谓的睡眠等待。</p><h3 id=58-配置方法 class="relative group">5.8 配置方法 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#58-%e9%85%8d%e7%bd%ae%e6%96%b9%e6%b3%95 aria-label=Anchor>#</a></span></h3><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 全局启用（影响所有 socket）</span>
+</span></span><span class=line><span class=cl>sysctl -w net.core.busy_poll<span class=o>=</span><span class=m>50</span>        <span class=c1># epoll_wait 时轮询 50μs</span>
+</span></span><span class=line><span class=cl>sysctl -w net.core.busy_read<span class=o>=</span><span class=m>50</span>        <span class=c1># recv 时轮询 50μs</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 或每个 socket 单独设置（更灵活）</span>
+</span></span><span class=line><span class=cl>int <span class=nv>val</span> <span class=o>=</span> 50<span class=p>;</span>
+</span></span><span class=line><span class=cl>setsockopt<span class=o>(</span>fd, SOL_SOCKET, SO_BUSY_POLL, <span class=p>&amp;</span>val, sizeof<span class=o>(</span>val<span class=o>))</span><span class=p>;</span>
+</span></span></code></pre></div><p>代价是 CPU 使用率会升高（空转期间也在轮询），但对于隔离出来的专用核来说这不是问题——那个核反正也不给别人用。</p><h3 id=59-延迟阶梯从传统中断到-kernel-bypass class="relative group">5.9 延迟阶梯：从传统中断到 Kernel Bypass <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#59-%e5%bb%b6%e8%bf%9f%e9%98%b6%e6%a2%af%e4%bb%8e%e4%bc%a0%e7%bb%9f%e4%b8%ad%e6%96%ad%e5%88%b0-kernel-bypass aria-label=Anchor>#</a></span></h3><pre tabindex=0><code>传统中断模式    ~10-30μs    什么都不配置
+Busy Poll      ~3-10μs     sysctl 一行搞定，不改应用代码
+AF_XDP         ~1-3μs      需要改代码，使用 XDP socket
+DPDK           ~0.5-1μs    重写网络栈，完全接管网卡
+</code></pre><ul><li><strong>Busy Poll</strong>：不改代码架构，socket API 不变，性价比最高</li><li><strong>AF_XDP</strong>：内核创建共享内存 ring（UMEM），用户态和网卡驱动共享，绕过协议栈但不完全绕过内核</li><li><strong>DPDK</strong>：网卡 DMA 直接映射到用户态内存，用户线程在用户态直接读 DMA ring，完全绕过内核，自己在用户态实现 TCP/IP</li></ul><p>对于 WebSocket 行情接收场景，busy poll 通常就够了。如果需要更极致的延迟，才考虑 AF_XDP 或 DPDK，但那意味着重写整个网络层。</p><hr><h2 id=六192-核-graviton3-的推荐核心分配方案 class="relative group">六、192 核 Graviton3 的推荐核心分配方案 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#%e5%85%ad192-%e6%a0%b8-graviton3-%e7%9a%84%e6%8e%a8%e8%8d%90%e6%a0%b8%e5%bf%83%e5%88%86%e9%85%8d%e6%96%b9%e6%a1%88 aria-label=Anchor>#</a></span></h2><p>结合以上所有分析，给出针对 192 核 Graviton3 + 加密货币行情系统的具体核心分配方案。</p><h3 id=61-硬件拓扑回顾 class="relative group">6.1 硬件拓扑回顾 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#61-%e7%a1%ac%e4%bb%b6%e6%8b%93%e6%89%91%e5%9b%9e%e9%a1%be aria-label=Anchor>#</a></span></h3><pre tabindex=0><code>Architecture:     aarch64
+CPU(s):           192 (Thread per core: 1, 无超线程)
+Socket(s):        2, 每 Socket 96 核
+NUMA node 0:      CPU 0-95
+NUMA node 1:      CPU 96-191
+L1d/L1i:          64KB per core
+L2:               2MB per core（私有）
+L3:               36MB per socket（共享）
+</code></pre><h3 id=62-确定网卡的-numa-亲和性 class="relative group">6.2 确定网卡的 NUMA 亲和性 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#62-%e7%a1%ae%e5%ae%9a%e7%bd%91%e5%8d%a1%e7%9a%84-numa-%e4%ba%b2%e5%92%8c%e6%80%a7 aria-label=Anchor>#</a></span></h3><p>首先确认网卡属于哪个 NUMA node，这决定了所有行情相关的核心必须分配在哪个 node 上：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>cat /sys/class/net/enP11p4s0/device/numa_node
+</span></span></code></pre></div><p>如果输出是 <code>0</code>，则行情相关的一切（网卡中断核、行情线程核）都必须在 CPU 0-95 范围内，避免跨 NUMA 访问。</p><h3 id=63-核心分配方案 class="relative group">6.3 核心分配方案 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#63-%e6%a0%b8%e5%bf%83%e5%88%86%e9%85%8d%e6%96%b9%e6%a1%88 aria-label=Anchor>#</a></span></h3><p>假设主行情网卡（enP11p4s0）在 NUMA node 0：</p><pre tabindex=0><code>NUMA Node 0 (CPU 0-95)
+──────────────────────────────────────────────────
+CPU 0-1     : Housekeeping
+              ├── 内核线程（ksoftirqd, kworker, rcu...）
+              ├── 系统服务（sshd, journald, systemd...）
+              └── 其他非关键中断
+
+CPU 2-5     : 网卡中断专用
+              ├── enP11p4s0 的 32 个 RX 队列中断
+              │   （可以将队列数缩减，或将多个队列的 IRQ 绑到同一个核）
+              └── ksoftirqd/2-5（NAPI 软中断收包）
+
+CPU 6-15    : 行情接收线程
+              ├── binance-MD, okx-MD, gate-MD 等
+              ├── WebSocket 解析 + 行情分发
+              └── 建议与中断核在同一 L3 域内（同 NUMA node 0）
+
+CPU 16-80   : 策略计算 / 业务逻辑
+              ├── 策略引擎
+              ├── 风控模块
+              └── 订单管理
+
+CPU 81-95   : 备用 / 其他服务
+
+NUMA Node 1 (CPU 96-191)
+──────────────────────────────────────────────────
+CPU 96-100  : 其他网卡中断（enP11p8s0 等次要网卡）
+CPU 101-191 : 其他业务、回测、数据处理等非延迟敏感任务
+</code></pre><h3 id=64-内核启动参数 class="relative group">6.4 内核启动参数 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#64-%e5%86%85%e6%a0%b8%e5%90%af%e5%8a%a8%e5%8f%82%e6%95%b0 aria-label=Anchor>#</a></span></h3><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># /etc/default/grub</span>
+</span></span><span class=line><span class=cl><span class=nv>GRUB_CMDLINE_LINUX</span><span class=o>=</span><span class=s2>&#34;isolcpus=managed_irq,domain,2-95,101-191 \
+</span></span></span><span class=line><span class=cl><span class=s2>nohz_full=6-95,101-191 \
+</span></span></span><span class=line><span class=cl><span class=s2>rcu_nocbs=6-95,101-191 \
+</span></span></span><span class=line><span class=cl><span class=s2>nosoftlockup \
+</span></span></span><span class=line><span class=cl><span class=s2>processor.max_cstate=0 \
+</span></span></span><span class=line><span class=cl><span class=s2>idle=poll&#34;</span>
+</span></span></code></pre></div><p>参数说明：</p><ul><li><strong><code>isolcpus=managed_irq,domain,2-95,101-191</code></strong>：将这些核从调度域中移除，同时让内核管理这些核上的中断分配（<code>managed_irq</code>）。CPU 0-1 保留为 housekeeping。</li><li><strong><code>nohz_full=6-95,101-191</code></strong>：在这些核上关闭定时器 tick（adaptive-ticks），当核上只有一个 runnable 任务时，不再产生周期性的时钟中断。注意网卡中断核（CPU 2-5）不加 <code>nohz_full</code>，因为它们需要处理中断，tick 对它们影响不大。</li><li><strong><code>rcu_nocbs=6-95,101-191</code></strong>：将这些核上的 RCU 回调卸载到专门的内核线程上处理，避免 RCU 回调打断用户线程。</li><li><strong><code>processor.max_cstate=0</code></strong>：禁止 CPU 进入深度睡眠状态。C-state 越深，唤醒延迟越大（C1 约 1μs，C6 可达 100μs+）。交易系统宁可空转也不能容忍唤醒延迟。</li><li><strong><code>idle=poll</code></strong>：CPU 空闲时不进入任何低功耗状态，直接在 idle 循环里 spin。与 <code>max_cstate=0</code> 配合，确保 CPU 始终处于最高性能状态。</li></ul><h3 id=65-运行时配置脚本 class="relative group">6.5 运行时配置脚本 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#65-%e8%bf%90%e8%a1%8c%e6%97%b6%e9%85%8d%e7%bd%ae%e8%84%9a%e6%9c%ac aria-label=Anchor>#</a></span></h3><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=cp>#!/bin/bash
+</span></span></span><span class=line><span class=cl><span class=cp></span><span class=c1># setup_affinity.sh - 系统启动后执行</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 1. 关闭 irqbalance</span>
+</span></span><span class=line><span class=cl>systemctl stop irqbalance
+</span></span><span class=line><span class=cl>systemctl disable irqbalance
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 2. 缩减网卡队列数（减少中断分散）</span>
+</span></span><span class=line><span class=cl>ethtool -L enP11p4s0 combined <span class=m>4</span>   <span class=c1># 只用 4 个队列</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 3. 绑定网卡中断到专用核</span>
+</span></span><span class=line><span class=cl><span class=c1># 查找 enP11p4s0 的中断号</span>
+</span></span><span class=line><span class=cl><span class=nv>IRQS</span><span class=o>=</span><span class=k>$(</span>grep enP11p4s0 /proc/interrupts <span class=p>|</span> awk <span class=s1>&#39;{print $1}&#39;</span> <span class=p>|</span> tr -d <span class=s1>&#39;:&#39;</span><span class=k>)</span>
+</span></span><span class=line><span class=cl><span class=nv>CPU</span><span class=o>=</span><span class=m>2</span>
+</span></span><span class=line><span class=cl><span class=k>for</span> irq in <span class=nv>$IRQS</span><span class=p>;</span> <span class=k>do</span>
+</span></span><span class=line><span class=cl>    <span class=nb>echo</span> <span class=nv>$CPU</span> &gt; /proc/irq/<span class=nv>$irq</span>/smp_affinity_list
+</span></span><span class=line><span class=cl>    <span class=nv>CPU</span><span class=o>=</span><span class=k>$((</span> <span class=o>(</span>CPU <span class=o>-</span> <span class=m>2</span> <span class=o>+</span> <span class=m>1</span><span class=o>)</span> <span class=o>%</span> <span class=m>4</span> <span class=o>+</span> <span class=m>2</span> <span class=k>))</span>  <span class=c1># 在 CPU 2-5 之间轮转</span>
+</span></span><span class=line><span class=cl><span class=k>done</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 4. 关闭 GRO（减少攒包延迟）</span>
+</span></span><span class=line><span class=cl>ethtool -K enP11p4s0 gro off
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 5. 关闭 Adaptive Coalescing</span>
+</span></span><span class=line><span class=cl>ethtool -C enP11p4s0 adaptive-rx off rx-usecs <span class=m>0</span> rx-frames <span class=m>1</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 6. 把所有非关键进程限制到 housekeeping 核</span>
+</span></span><span class=line><span class=cl><span class=k>for</span> pid in <span class=k>$(</span>ps -eo pid --no-headers<span class=k>)</span><span class=p>;</span> <span class=k>do</span>
+</span></span><span class=line><span class=cl>    taskset -apc 0-1 <span class=nv>$pid</span> 2&gt;/dev/null
+</span></span><span class=line><span class=cl><span class=k>done</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 7. 开启 busy poll</span>
+</span></span><span class=line><span class=cl>sysctl -w net.core.busy_poll<span class=o>=</span><span class=m>50</span>
+</span></span><span class=line><span class=cl>sysctl -w net.core.busy_read<span class=o>=</span><span class=m>50</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 8. 增大 socket buffer</span>
+</span></span><span class=line><span class=cl>sysctl -w net.core.rmem_max<span class=o>=</span><span class=m>26214400</span>
+</span></span><span class=line><span class=cl>sysctl -w net.core.rmem_default<span class=o>=</span><span class=m>26214400</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 9. 关闭 conntrack 和 iptables（如果不需要防火墙）</span>
+</span></span><span class=line><span class=cl><span class=c1># rmmod nf_conntrack 2&gt;/dev/null</span>
+</span></span><span class=line><span class=cl><span class=c1># iptables -F 2&gt;/dev/null</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 10. 启动行情进程（绑到隔离核）</span>
+</span></span><span class=line><span class=cl>taskset -c <span class=m>6</span>  ./binance_md_receiver <span class=p>&amp;</span>
+</span></span><span class=line><span class=cl>taskset -c <span class=m>7</span>  ./okx_md_receiver <span class=p>&amp;</span>
+</span></span><span class=line><span class=cl>taskset -c <span class=m>8</span>  ./gate_md_receiver <span class=p>&amp;</span>
+</span></span><span class=line><span class=cl>taskset -c <span class=m>16</span> ./strategy_engine <span class=p>&amp;</span>
+</span></span></code></pre></div><h3 id=66-验证配置是否生效 class="relative group">6.6 验证配置是否生效 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#66-%e9%aa%8c%e8%af%81%e9%85%8d%e7%bd%ae%e6%98%af%e5%90%a6%e7%94%9f%e6%95%88 aria-label=Anchor>#</a></span></h3><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 检查 isolcpus 是否生效</span>
+</span></span><span class=line><span class=cl>cat /sys/devices/system/cpu/isolated
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 检查 nohz_full 是否生效</span>
+</span></span><span class=line><span class=cl>cat /sys/devices/system/cpu/nohz_full
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 检查中断亲和性</span>
+</span></span><span class=line><span class=cl><span class=k>for</span> irq in <span class=k>$(</span>grep enP11p4s0 /proc/interrupts <span class=p>|</span> awk <span class=s1>&#39;{print $1}&#39;</span> <span class=p>|</span> tr -d <span class=s1>&#39;:&#39;</span><span class=k>)</span><span class=p>;</span> <span class=k>do</span>
+</span></span><span class=line><span class=cl>    <span class=nb>echo</span> <span class=s2>&#34;IRQ </span><span class=nv>$irq</span><span class=s2> → CPU </span><span class=k>$(</span>cat /proc/irq/<span class=nv>$irq</span>/smp_affinity_list<span class=k>)</span><span class=s2>&#34;</span>
+</span></span><span class=line><span class=cl><span class=k>done</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 检查网卡 NUMA 亲和性</span>
+</span></span><span class=line><span class=cl>cat /sys/class/net/enP11p4s0/device/numa_node
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 实时观察中断分布（确认没有漂移）</span>
+</span></span><span class=line><span class=cl>watch -n1 <span class=s1>&#39;cat /proc/interrupts | grep enP11p4s0 | head -5&#39;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 检查行情线程的核绑定</span>
+</span></span><span class=line><span class=cl><span class=k>for</span> pid in <span class=k>$(</span>pgrep -f md_receiver<span class=k>)</span><span class=p>;</span> <span class=k>do</span>
+</span></span><span class=line><span class=cl>    <span class=nb>echo</span> <span class=s2>&#34;PID </span><span class=nv>$pid</span><span class=s2> → CPU </span><span class=k>$(</span>taskset -p <span class=nv>$pid</span> <span class=p>|</span> awk <span class=s1>&#39;{print $NF}&#39;</span><span class=k>)</span><span class=s2>&#34;</span>
+</span></span><span class=line><span class=cl><span class=k>done</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 观察 housekeeping 核负载</span>
+</span></span><span class=line><span class=cl>mpstat -P 0,1 <span class=m>1</span>
+</span></span></code></pre></div><hr><h2 id=七与上一篇文章的关系 class="relative group">七、与上一篇文章的关系 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#%e4%b8%83%e4%b8%8e%e4%b8%8a%e4%b8%80%e7%af%87%e6%96%87%e7%ab%a0%e7%9a%84%e5%85%b3%e7%b3%bb aria-label=Anchor>#</a></span></h2><p>本文和<a href=/blog/2026-03-17-net_proc/>上一篇</a>构成一个系列，分别从两个不同的视角分析同一个系统：</p><table><thead><tr><th>维度</th><th>上一篇</th><th>本篇</th></tr></thead><tbody><tr><td>核心问题</td><td>数据包怎么走</td><td>CPU 核心怎么分</td></tr><tr><td>视角</td><td>Packet-centric（以包为中心）</td><td>CPU-centric（以核为中心）</td></tr><tr><td>覆盖范围</td><td>物理层 → NIC → 硬中断 → NAPI → 协议栈 → socket → 用户态</td><td>isolcpus → housekeeping → 中断绑核 → 抢占机制 → busy poll</td></tr><tr><td>回答的关键决策</td><td>流量该走哪张网卡？GRO 要不要关？conntrack 要不要卸？</td><td>哪些核跑内核家务？中断和行情线程放同核还是分开？busy poll 怎么配？</td></tr></tbody></table><p>两篇文章交叉引用的要点：</p><ul><li>上一篇的第三章（硬中断）和第四章（NAPI）是理解本篇第四章（中断抢占）和第五章（busy poll）的前置知识。</li><li>上一篇的 10.2 节（IRQ core 与应用进程 core 亲和）在本篇第三章做了更深入的展开，解释了同核 cache 命中的底层原因。</li><li>上一篇的 10.5 节（Busy Polling）在本篇第五章做了完整的内核代码级解析，并与用户态 busy loop 做了清晰区分。</li></ul></div></section><footer class="max-w-4xl pt-8 print:hidden"><div class=flex><picture class="!mb-0 !mt-0 me-4 w-24 h-auto rounded-full"><img width=360 height=360 class="!mb-0 !mt-0 me-4 w-24 h-auto rounded-full" alt="Wenjun Yu" loading=lazy decoding=async src=/img/author.jpg></picture><div class=place-self-center><div class="text-[0.6rem] uppercase leading-3 text-neutral-500 dark:text-neutral-400">Author</div><div class="font-semibold leading-6 text-neutral-800 dark:text-neutral-300">Wenjun Yu</div><div class="text-sm text-neutral-700 dark:text-neutral-400">A little bit about you</div><div class="text-2xl sm:text-lg"><div class="flex flex-wrap text-neutral-400 dark:text-neutral-500"><a class="px-1 transition-transform hover:scale-125 hover:text-primary-700 dark:hover:text-primary-400" style=will-change:transform href=https://github.com/code-agree target=_blank aria-label=Github rel="me noopener noreferrer"><span class="icon relative inline-block px-1 align-text-bottom"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><path fill="currentcolor" d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6.0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6.0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3.0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1.0-6.2-.3-40.4-.3-61.4.0.0-70 15-84.7-29.8.0.0-11.4-29.1-27.8-36.6.0.0-22.9-15.7 1.6-15.4.0.0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5.0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9.0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4.0 33.7-.3 75.4-.3 83.6.0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6.0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9.0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span></a><a class="px-1 transition-transform hover:scale-125 hover:text-primary-700 dark:hover:text-primary-400" style=will-change:transform href=https://x.com/flight_from_ target=_blank aria-label=X-Twitter rel="me noopener noreferrer"><span class="icon relative inline-block px-1 align-text-bottom"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentcolor" d="M389.2 48h70.6L305.6 224.2 487 464H345L233.7 318.6 106.5 464H35.8L200.7 275.5 26.8 48H172.4L272.9 180.9 389.2 48zM364.4 421.8h39.1L151.1 88h-42L364.4 421.8z"/></svg></span></a><a class="px-1 transition-transform hover:scale-125 hover:text-primary-700 dark:hover:text-primary-400" style=will-change:transform href=mailto:lineyua66@gmail.com target=_blank aria-label=Email rel="me noopener noreferrer"><span class="icon relative inline-block px-1 align-text-bottom"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentcolor" d="M207.8 20.73c-93.45 18.32-168.7 93.66-187 187.1-27.64 140.9 68.65 266.2 199.1 285.1 19.01 2.888 36.17-12.26 36.17-31.49l1e-4-.6631c0-15.74-11.44-28.88-26.84-31.24-84.35-12.98-149.2-86.13-149.2-174.2.0-102.9 88.61-185.5 193.4-175.4 91.54 8.869 158.6 91.25 158.6 183.2v16.16c0 22.09-17.94 40.05-40 40.05s-40.01-17.96-40.01-40.05v-120.1c0-8.847-7.161-16.02-16.01-16.02l-31.98.0036c-7.299.0-13.2 4.992-15.12 11.68-24.85-12.15-54.24-16.38-86.06-5.106-38.75 13.73-68.12 48.91-73.72 89.64-9.483 69.01 43.81 128 110.9 128 26.44.0 50.43-9.544 69.59-24.88 24 31.3 65.23 48.69 109.4 37.49C465.2 369.3 496 324.1 495.1 277.2V256.3c0-149.2-133.9-265.632-287.3-235.57zM239.1 304.3c-26.47.0-48-21.56-48-48.05s21.53-48.05 48-48.05 48 21.56 48 48.05-20.6 48.05-48 48.05z"/></svg></span></a></div></div></div></div><section class="flex flex-row flex-wrap justify-center pt-4 text-xl"><a class="m-1 inline-block min-w-[2.4rem] rounded bg-neutral-300 p-1 text-center text-neutral-700 hover:bg-primary-500 hover:text-neutral dark:bg-neutral-700 dark:text-neutral-300 dark:hover:bg-primary-400 dark:hover:text-neutral-800" href="https://www.facebook.com/sharer/sharer.php?u=https://code-agree.github.io/blog/2026-03-30-cpu_bindcore/&amp;quote=%e4%bd%8e%e5%bb%b6%e8%bf%9f%e7%b3%bb%e7%bb%9f%e7%9a%84%20CPU%20%e6%a0%b8%e5%bf%83%e8%a7%84%e5%88%92%ef%bc%9a%e4%bb%8e%20isolcpus%20%e5%88%b0%20Busy%20Poll%20%e7%9a%84%e5%86%85%e6%a0%b8%e7%ba%a7%e5%ae%9e%e6%88%98" title="Share on Facebook" aria-label="Share on Facebook" target=_blank rel="noopener noreferrer"><span class="icon relative inline-block px-1 align-text-bottom"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentcolor" d="M504 256C504 119 393 8 256 8S8 119 8 256c0 123.78 90.69 226.38 209.25 245V327.69h-63V256h63v-54.64c0-62.15 37-96.48 93.67-96.48 27.14.0 55.52 4.84 55.52 4.84v61h-31.28c-30.8.0-40.41 19.12-40.41 38.73V256h68.78l-11 71.69h-57.78V501C413.31 482.38 504 379.78 504 256z"/></svg></span></a><a class="m-1 inline-block min-w-[2.4rem] rounded bg-neutral-300 p-1 text-center text-neutral-700 hover:bg-primary-500 hover:text-neutral dark:bg-neutral-700 dark:text-neutral-300 dark:hover:bg-primary-400 dark:hover:text-neutral-800" href="https://x.com/intent/tweet/?url=https://code-agree.github.io/blog/2026-03-30-cpu_bindcore/&amp;text=%e4%bd%8e%e5%bb%b6%e8%bf%9f%e7%b3%bb%e7%bb%9f%e7%9a%84%20CPU%20%e6%a0%b8%e5%bf%83%e8%a7%84%e5%88%92%ef%bc%9a%e4%bb%8e%20isolcpus%20%e5%88%b0%20Busy%20Poll%20%e7%9a%84%e5%86%85%e6%a0%b8%e7%ba%a7%e5%ae%9e%e6%88%98" title="Post on X" aria-label="Post on X" target=_blank rel="noopener noreferrer"><span class="icon relative inline-block px-1 align-text-bottom"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentcolor" d="M389.2 48h70.6L305.6 224.2 487 464H345L233.7 318.6 106.5 464H35.8L200.7 275.5 26.8 48H172.4L272.9 180.9 389.2 48zM364.4 421.8h39.1L151.1 88h-42L364.4 421.8z"/></svg></span></a><a class="m-1 inline-block min-w-[2.4rem] rounded bg-neutral-300 p-1 text-center text-neutral-700 hover:bg-primary-500 hover:text-neutral dark:bg-neutral-700 dark:text-neutral-300 dark:hover:bg-primary-400 dark:hover:text-neutral-800" href="https://tootpick.org/#text=https://code-agree.github.io/blog/2026-03-30-cpu_bindcore/%20%e4%bd%8e%e5%bb%b6%e8%bf%9f%e7%b3%bb%e7%bb%9f%e7%9a%84%20CPU%20%e6%a0%b8%e5%bf%83%e8%a7%84%e5%88%92%ef%bc%9a%e4%bb%8e%20isolcpus%20%e5%88%b0%20Busy%20Poll%20%e7%9a%84%e5%86%85%e6%a0%b8%e7%ba%a7%e5%ae%9e%e6%88%98" title="Toot on Mastodon" aria-label="Toot on Mastodon" target=_blank rel="noopener noreferrer"><span class="icon relative inline-block px-1 align-text-bottom"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><path fill="currentcolor" d="M433 179.11c0-97.2-63.71-125.7-63.71-125.7-62.52-28.7-228.56-28.4-290.48.0.0.0-63.72 28.5-63.72 125.7.0 115.7-6.6 259.4 105.63 289.1 40.51 10.7 75.32 13 103.33 11.4 50.81-2.8 79.32-18.1 79.32-18.1l-1.7-36.9s-36.31 11.4-77.12 10.1c-40.41-1.4-83-4.4-89.63-54a102.54 102.54.0 01-.9-13.9c85.63 20.9 158.65 9.1 178.75 6.7 56.12-6.7 105-41.3 111.23-72.9 9.8-49.8 9-121.5 9-121.5zm-75.12 125.2h-46.63v-114.2c0-49.7-64-51.6-64 6.9v62.5h-46.33V197c0-58.5-64-56.6-64-6.9v114.2H90.19c0-122.1-5.2-147.9 18.41-175 25.9-28.9 79.82-30.8 103.83 6.1l11.6 19.5 11.6-19.5c24.11-37.1 78.12-34.8 103.83-6.1 23.71 27.3 18.4 53 18.4 175z"/></svg></span></a><a class="m-1 inline-block min-w-[2.4rem] rounded bg-neutral-300 p-1 text-center text-neutral-700 hover:bg-primary-500 hover:text-neutral dark:bg-neutral-700 dark:text-neutral-300 dark:hover:bg-primary-400 dark:hover:text-neutral-800" href="https://pinterest.com/pin/create/bookmarklet/?url=https://code-agree.github.io/blog/2026-03-30-cpu_bindcore/&amp;description=%e4%bd%8e%e5%bb%b6%e8%bf%9f%e7%b3%bb%e7%bb%9f%e7%9a%84%20CPU%20%e6%a0%b8%e5%bf%83%e8%a7%84%e5%88%92%ef%bc%9a%e4%bb%8e%20isolcpus%20%e5%88%b0%20Busy%20Poll%20%e7%9a%84%e5%86%85%e6%a0%b8%e7%ba%a7%e5%ae%9e%e6%88%98" title="Pin on Pinterest" aria-label="Pin on Pinterest" target=_blank rel="noopener noreferrer"><span class="icon relative inline-block px-1 align-text-bottom"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><path fill="currentcolor" d="M496 256c0 137-111 248-248 248-25.6.0-50.2-3.9-73.4-11.1 10.1-16.5 25.2-43.5 30.8-65 3-11.6 15.4-59 15.4-59 8.1 15.4 31.7 28.5 56.8 28.5 74.8.0 128.7-68.8 128.7-154.3.0-81.9-66.9-143.2-152.9-143.2-107 0-163.9 71.8-163.9 150.1.0 36.4 19.4 81.7 50.3 96.1 4.7 2.2 7.2 1.2 8.3-3.3.8-3.4 5-20.3 6.9-28.1.6-2.5.3-4.7-1.7-7.1-10.1-12.5-18.3-35.3-18.3-56.6.0-54.7 41.4-107.6 112-107.6 60.9.0 103.6 41.5 103.6 100.9.0 67.1-33.9 113.6-78 113.6-24.3.0-42.6-20.1-36.7-44.8 7-29.5 20.5-61.3 20.5-82.6.0-19-10.2-34.9-31.4-34.9-24.9.0-44.9 25.7-44.9 60.2.0 22 7.4 36.8 7.4 36.8s-24.5 103.8-29 123.2c-5 21.4-3 51.6-.9 71.2C65.4 450.9.0 361.1.0 256 0 119 111 8 248 8s248 111 248 248z"/></svg></span></a><a class="m-1 inline-block min-w-[2.4rem] rounded bg-neutral-300 p-1 text-center text-neutral-700 hover:bg-primary-500 hover:text-neutral dark:bg-neutral-700 dark:text-neutral-300 dark:hover:bg-primary-400 dark:hover:text-neutral-800" href="https://reddit.com/submit/?url=https://code-agree.github.io/blog/2026-03-30-cpu_bindcore/&amp;resubmit=true&amp;title=%e4%bd%8e%e5%bb%b6%e8%bf%9f%e7%b3%bb%e7%bb%9f%e7%9a%84%20CPU%20%e6%a0%b8%e5%bf%83%e8%a7%84%e5%88%92%ef%bc%9a%e4%bb%8e%20isolcpus%20%e5%88%b0%20Busy%20Poll%20%e7%9a%84%e5%86%85%e6%a0%b8%e7%ba%a7%e5%ae%9e%e6%88%98" title="Submit to Reddit" aria-label="Submit to Reddit" target=_blank rel="noopener noreferrer"><span class="icon relative inline-block px-1 align-text-bottom"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentcolor" d="M201.5 305.5c-13.8.0-24.9-11.1-24.9-24.6.0-13.8 11.1-24.9 24.9-24.9 13.6.0 24.6 11.1 24.6 24.9.0 13.6-11.1 24.6-24.6 24.6zM504 256c0 137-111 248-248 248S8 393 8 256 119 8 256 8s248 111 248 248zm-132.3-41.2c-9.4.0-17.7 3.9-23.8 10-22.4-15.5-52.6-25.5-86.1-26.6l17.4-78.3 55.4 12.5c0 13.6 11.1 24.6 24.6 24.6 13.8.0 24.9-11.3 24.9-24.9s-11.1-24.9-24.9-24.9c-9.7.0-18 5.8-22.1 13.8l-61.2-13.6c-3-.8-6.1 1.4-6.9 4.4l-19.1 86.4c-33.2 1.4-63.1 11.3-85.5 26.8-6.1-6.4-14.7-10.2-24.1-10.2-34.9.0-46.3 46.9-14.4 62.8-1.1 5-1.7 10.2-1.7 15.5.0 52.6 59.2 95.2 132 95.2 73.1.0 132.3-42.6 132.3-95.2.0-5.3-.6-10.8-1.9-15.8 31.3-16 19.8-62.5-14.9-62.5zM302.8 331c-18.2 18.2-76.1 17.9-93.6.0-2.2-2.2-6.1-2.2-8.3.0-2.5 2.5-2.5 6.4.0 8.6 22.8 22.8 87.3 22.8 110.2.0 2.5-2.2 2.5-6.1.0-8.6-2.2-2.2-6.1-2.2-8.3.0zm7.7-75c-13.6.0-24.6 11.1-24.6 24.9.0 13.6 11.1 24.6 24.6 24.6 13.8.0 24.9-11.1 24.9-24.6.0-13.8-11-24.9-24.9-24.9z"/></svg></span></a><a class="m-1 inline-block min-w-[2.4rem] rounded bg-neutral-300 p-1 text-center text-neutral-700 hover:bg-primary-500 hover:text-neutral dark:bg-neutral-700 dark:text-neutral-300 dark:hover:bg-primary-400 dark:hover:text-neutral-800" href="https://www.linkedin.com/shareArticle?mini=true&amp;url=https://code-agree.github.io/blog/2026-03-30-cpu_bindcore/&amp;title=%e4%bd%8e%e5%bb%b6%e8%bf%9f%e7%b3%bb%e7%bb%9f%e7%9a%84%20CPU%20%e6%a0%b8%e5%bf%83%e8%a7%84%e5%88%92%ef%bc%9a%e4%bb%8e%20isolcpus%20%e5%88%b0%20Busy%20Poll%20%e7%9a%84%e5%86%85%e6%a0%b8%e7%ba%a7%e5%ae%9e%e6%88%98" title="Share on LinkedIn" aria-label="Share on LinkedIn" target=_blank rel="noopener noreferrer"><span class="icon relative inline-block px-1 align-text-bottom"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><path fill="currentcolor" d="M416 32H31.9C14.3 32 0 46.5.0 64.3v383.4C0 465.5 14.3 480 31.9 480H416c17.6.0 32-14.5 32-32.3V64.3c0-17.8-14.4-32.3-32-32.3zM135.4 416H69V202.2h66.5V416zm-33.2-243c-21.3.0-38.5-17.3-38.5-38.5S80.9 96 102.2 96c21.2.0 38.5 17.3 38.5 38.5.0 21.3-17.2 38.5-38.5 38.5zm282.1 243h-66.4V312c0-24.8-.5-56.7-34.5-56.7-34.6.0-39.9 27-39.9 54.9V416h-66.4V202.2h63.7v29.2h.9c8.9-16.8 30.6-34.5 62.9-34.5 67.2.0 79.7 44.3 79.7 101.9V416z"/></svg></span></a><a class="m-1 inline-block min-w-[2.4rem] rounded bg-neutral-300 p-1 text-center text-neutral-700 hover:bg-primary-500 hover:text-neutral dark:bg-neutral-700 dark:text-neutral-300 dark:hover:bg-primary-400 dark:hover:text-neutral-800" href="mailto:?body=https://code-agree.github.io/blog/2026-03-30-cpu_bindcore/&amp;subject=%e4%bd%8e%e5%bb%b6%e8%bf%9f%e7%b3%bb%e7%bb%9f%e7%9a%84%20CPU%20%e6%a0%b8%e5%bf%83%e8%a7%84%e5%88%92%ef%bc%9a%e4%bb%8e%20isolcpus%20%e5%88%b0%20Busy%20Poll%20%e7%9a%84%e5%86%85%e6%a0%b8%e7%ba%a7%e5%ae%9e%e6%88%98" title="Send via email" aria-label="Send via email" target=_blank rel="noopener noreferrer"><span class="icon relative inline-block px-1 align-text-bottom"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentcolor" d="M207.8 20.73c-93.45 18.32-168.7 93.66-187 187.1-27.64 140.9 68.65 266.2 199.1 285.1 19.01 2.888 36.17-12.26 36.17-31.49l1e-4-.6631c0-15.74-11.44-28.88-26.84-31.24-84.35-12.98-149.2-86.13-149.2-174.2.0-102.9 88.61-185.5 193.4-175.4 91.54 8.869 158.6 91.25 158.6 183.2v16.16c0 22.09-17.94 40.05-40 40.05s-40.01-17.96-40.01-40.05v-120.1c0-8.847-7.161-16.02-16.01-16.02l-31.98.0036c-7.299.0-13.2 4.992-15.12 11.68-24.85-12.15-54.24-16.38-86.06-5.106-38.75 13.73-68.12 48.91-73.72 89.64-9.483 69.01 43.81 128 110.9 128 26.44.0 50.43-9.544 69.59-24.88 24 31.3 65.23 48.69 109.4 37.49C465.2 369.3 496 324.1 495.1 277.2V256.3c0-149.2-133.9-265.632-287.3-235.57zM239.1 304.3c-26.47.0-48-21.56-48-48.05s21.53-48.05 48-48.05 48 21.56 48 48.05-20.6 48.05-48 48.05z"/></svg></span></a><a class="m-1 inline-block min-w-[2.4rem] rounded bg-neutral-300 p-1 text-center text-neutral-700 hover:bg-primary-500 hover:text-neutral dark:bg-neutral-700 dark:text-neutral-300 dark:hover:bg-primary-400 dark:hover:text-neutral-800" href="https://telegram.me/share/url?text=https://code-agree.github.io/blog/2026-03-30-cpu_bindcore/&amp;url=%e4%bd%8e%e5%bb%b6%e8%bf%9f%e7%b3%bb%e7%bb%9f%e7%9a%84%20CPU%20%e6%a0%b8%e5%bf%83%e8%a7%84%e5%88%92%ef%bc%9a%e4%bb%8e%20isolcpus%20%e5%88%b0%20Busy%20Poll%20%e7%9a%84%e5%86%85%e6%a0%b8%e7%ba%a7%e5%ae%9e%e6%88%98" title="Share on Telegram" aria-label="Share on Telegram" target=_blank rel="noopener noreferrer"><span class="icon relative inline-block px-1 align-text-bottom"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><path fill="currentcolor" d="M248 8C111.033 8 0 119.033.0 256S111.033 504 248 504 496 392.967 496 256 384.967 8 248 8zM362.952 176.66c-3.732 39.215-19.881 134.378-28.1 178.3-3.476 18.584-10.322 24.816-16.948 25.425-14.4 1.326-25.338-9.517-39.287-18.661-21.827-14.308-34.158-23.215-55.346-37.177-24.485-16.135-8.612-25 5.342-39.5 3.652-3.793 67.107-61.51 68.335-66.746.153-.655.3-3.1-1.154-4.384s-3.59-.849-5.135-.5q-3.283.746-104.608 69.142-14.845 10.194-26.894 9.934c-8.855-.191-25.888-5.006-38.551-9.123-15.531-5.048-27.875-7.717-26.8-16.291q.84-6.7 18.45-13.7 108.446-47.248 144.628-62.3c68.872-28.647 83.183-33.623 92.511-33.789 2.052-.034 6.639.474 9.61 2.885a10.452 10.452.0 013.53 6.716A43.765 43.765.0 01362.952 176.66z"/></svg></span></a><a class="m-1 inline-block min-w-[2.4rem] rounded bg-neutral-300 p-1 text-center text-neutral-700 hover:bg-primary-500 hover:text-neutral dark:bg-neutral-700 dark:text-neutral-300 dark:hover:bg-primary-400 dark:hover:text-neutral-800" href="https://line.me/R/share?text=https://code-agree.github.io/blog/2026-03-30-cpu_bindcore/%e4%bd%8e%e5%bb%b6%e8%bf%9f%e7%b3%bb%e7%bb%9f%e7%9a%84%20CPU%20%e6%a0%b8%e5%bf%83%e8%a7%84%e5%88%92%ef%bc%9a%e4%bb%8e%20isolcpus%20%e5%88%b0%20Busy%20Poll%20%e7%9a%84%e5%86%85%e6%a0%b8%e7%ba%a7%e5%ae%9e%e6%88%98" title="Share on LINE" aria-label="Share on LINE" target=_blank rel="noopener noreferrer"><span class="icon relative inline-block px-1 align-text-bottom"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentcolor" d="M311 196.8v81.3c0 2.1-1.6 3.7-3.7 3.7h-13c-1.3.0-2.4-.7-3-1.5L254 230v48.2c0 2.1-1.6 3.7-3.7 3.7h-13c-2.1.0-3.7-1.6-3.7-3.7V196.9c0-2.1 1.6-3.7 3.7-3.7h12.9c1.1.0 2.4.6 3 1.6l37.3 50.3V196.9c0-2.1 1.6-3.7 3.7-3.7h13c2.1-.1 3.8 1.6 3.8 3.5zm-93.7-3.7h-13c-2.1.0-3.7 1.6-3.7 3.7v81.3c0 2.1 1.6 3.7 3.7 3.7h13c2.1.0 3.7-1.6 3.7-3.7V196.8c0-1.9-1.6-3.7-3.7-3.7zm-31.4 68.1H150.3V196.8c0-2.1-1.6-3.7-3.7-3.7h-13c-2.1.0-3.7 1.6-3.7 3.7v81.3c0 1 .3 1.8 1 2.5.7.6 1.5 1 2.5 1h52.2c2.1.0 3.7-1.6 3.7-3.7v-13c0-1.9-1.6-3.7-3.5-3.7zm193.7-68.1H327.3c-1.9.0-3.7 1.6-3.7 3.7v81.3c0 1.9 1.6 3.7 3.7 3.7h52.2c2.1.0 3.7-1.6 3.7-3.7V265c0-2.1-1.6-3.7-3.7-3.7H344V247.7h35.5c2.1.0 3.7-1.6 3.7-3.7V230.9c0-2.1-1.6-3.7-3.7-3.7H344V213.5h35.5c2.1.0 3.7-1.6 3.7-3.7v-13c-.1-1.9-1.7-3.7-3.7-3.7zM512 93.4v326c-.1 51.2-42.1 92.7-93.4 92.6H92.6C41.4 511.9-.1 469.8.0 418.6V92.6C.1 41.4 42.2-.1 93.4.0h326c51.2.1 92.7 42.1 92.6 93.4zM441.6 233.5c0-83.4-83.7-151.3-186.4-151.3S68.8 150.1 68.8 233.5c0 74.7 66.3 137.4 155.9 149.3 21.8 4.7 19.3 12.7 14.4 42.1-.8 4.7-3.8 18.4 16.1 10.1s107.3-63.2 146.5-108.2c27-29.7 39.9-59.8 39.9-93.1z"/></svg></span></a><a class="m-1 inline-block min-w-[2.4rem] rounded bg-neutral-300 p-1 text-center text-neutral-700 hover:bg-primary-500 hover:text-neutral dark:bg-neutral-700 dark:text-neutral-300 dark:hover:bg-primary-400 dark:hover:text-neutral-800" href="https://service.weibo.com/share/share.php?url=https://code-agree.github.io/blog/2026-03-30-cpu_bindcore/&amp;appkey=&amp;title=%e4%bd%8e%e5%bb%b6%e8%bf%9f%e7%b3%bb%e7%bb%9f%e7%9a%84%20CPU%20%e6%a0%b8%e5%bf%83%e8%a7%84%e5%88%92%ef%bc%9a%e4%bb%8e%20isolcpus%20%e5%88%b0%20Busy%20Poll%20%e7%9a%84%e5%86%85%e6%a0%b8%e7%ba%a7%e5%ae%9e%e6%88%98&amp;pic=&amp;ralateUid=&amp;lang" title="Share on Weibo" aria-label="Share on Weibo" target=_blank rel="noopener noreferrer"><span class="icon relative inline-block px-1 align-text-bottom"><svg xmlns="http://www.w3.org/2000/svg" height="16" width="16" viewBox="0 0 512 512"><path fill="currentcolor" d="M407 177.6c7.6-24-13.4-46.8-37.4-41.7-22 4.8-28.8-28.1-7.1-32.8 50.1-10.9 92.3 37.1 76.5 84.8-6.8 21.2-38.8 10.8-32-10.3zM214.8 446.7C108.5 446.7.0 395.3.0 310.4c0-44.3 28-95.4 76.3-143.7C176 67 279.5 65.8 249.9 161c-4 13.1 12.3 5.7 12.3 6 79.5-33.6 140.5-16.8 114 51.4-3.7 9.4 1.1 10.9 8.3 13.1 135.7 42.3 34.8 215.2-169.7 215.2zm143.7-146.3c-5.4-55.7-78.5-94-163.4-85.7-84.8 8.6-148.8 60.3-143.4 116s78.5 94 163.4 85.7c84.8-8.6 148.8-60.3 143.4-116zM347.9 35.1c-25.9 5.6-16.8 43.7 8.3 38.3 72.3-15.2 134.8 52.8 111.7 124-7.4 24.2 29.1 37 37.4 12 31.9-99.8-55.1-195.9-157.4-174.3zm-78.5 311c-17.1 38.8-66.8 60-109.1 46.3-40.8-13.1-58-53.4-40.3-89.7 17.7-35.4 63.1-55.4 103.4-45.1 42 10.8 63.1 50.2 46 88.5zm-86.3-30c-12.9-5.4-30 .3-38 12.9-8.3 12.9-4.3 28 8.6 34 13.1 6 30.8.3 39.1-12.9 8-13.1 3.7-28.3-9.7-34zm32.6-13.4c-5.1-1.7-11.4.6-14.3 5.4-2.9 5.1-1.4 10.6 3.7 12.9 5.1 2 11.7-.3 14.6-5.4 2.8-5.2 1.1-10.9-4-12.9z"/></svg></span></a></section><div class=pt-8><hr class="border-dotted border-neutral-300 dark:border-neutral-600"><div class="flex justify-between pt-3"><span><a class="group flex" href=/blog/2026-03-17-net_proc/><span class="me-2 text-neutral-700 transition-transform group-hover:-translate-x-[2px] group-hover:text-primary-600 dark:text-neutral dark:group-hover:text-primary-400"><span class="ltr:inline rtl:hidden">&larr;</span><span class="ltr:hidden rtl:inline">&rarr;</span></span>
+<span class="flex flex-col"><span class="mt-[0.1rem] leading-6 group-hover:underline group-hover:decoration-primary-500">从网线到策略引擎：Linux 网络收包全路径深度解析</span>
+<span class="mt-[0.1rem] text-xs text-neutral-500 dark:text-neutral-400"><time datetime="2026-03-17 23:10:26 +0800 +0800">17 March 2026</time>
+</span></span></a></span><span></span></div></div><div class=pt-3><hr class="border-dotted border-neutral-300 dark:border-neutral-600"><div class=pt-3><script src=https://giscus.app/client.js data-repo=code-agree/code-agree.github.io data-repo-id=R_kgDOK-ejEw data-category=Announcements data-category-id=DIC_kwDOK-ejE84ChYPz data-mapping=pathname data-strict=0 data-reactions-enabled=1 data-emit-metadata=0 data-input-position=top data-theme=preferred_color_scheme data-lang=zh-CN data-loading=lazy crossorigin=anonymous async></script></div></div></footer></article><div class="pointer-events-none absolute bottom-0 end-0 top-[100vh] w-12"><a href=#the-top class="pointer-events-auto sticky top-[calc(100vh-5.5rem)] flex h-12 w-12 items-center justify-center rounded-full bg-neutral/50 text-xl text-neutral-700 backdrop-blur hover:text-primary-600 dark:bg-neutral-800/50 dark:text-neutral dark:hover:text-primary-400" aria-label="Scroll to top" title="Scroll to top">&uarr;</a></div></main><footer class="py-10 print:hidden"><div class="flex items-center justify-between"><div><p class="text-sm text-neutral-500 dark:text-neutral-400">&copy;
+2026
+Wenjun Yu</p><p class="text-xs text-neutral-500 dark:text-neutral-400">Powered by <a class="hover:underline hover:decoration-primary-400 hover:text-primary-500" href=https://gohugo.io/ target=_blank rel="noopener noreferrer">Hugo</a> & <a class="hover:underline hover:decoration-primary-400 hover:text-primary-500" href=https://github.com/jpanther/congo target=_blank rel="noopener noreferrer">Congo</a></p></div><div class="flex flex-row items-center"></div></div></footer><div id=search-wrapper class="invisible fixed inset-0 z-50 flex h-screen w-screen cursor-default flex-col bg-neutral-500/50 p-4 backdrop-blur-sm sm:p-6 md:p-[10vh] lg:p-[12vh] dark:bg-neutral-900/50" data-url=https://code-agree.github.io/><div id=search-modal class="top-20 mx-auto flex min-h-0 w-full max-w-3xl flex-col rounded-md border border-neutral-200 bg-neutral shadow-lg dark:border-neutral-700 dark:bg-neutral-800"><header class="relative z-10 flex flex-none items-center justify-between px-2"><form class="flex min-w-0 flex-auto items-center"><div class="flex h-8 w-8 items-center justify-center text-neutral-400"><span class="icon relative inline-block px-1 align-text-bottom"><svg aria-hidden="true" focusable="false" data-prefix="fas" data-icon="search" class="svg-inline--fa fa-search fa-w-16" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentcolor" d="M505 442.7 405.3 343c-4.5-4.5-10.6-7-17-7H372c27.6-35.3 44-79.7 44-128C416 93.1 322.9.0 208 0S0 93.1.0 208s93.1 208 208 208c48.3.0 92.7-16.4 128-44v16.3c0 6.4 2.5 12.5 7 17l99.7 99.7c9.4 9.4 24.6 9.4 33.9.0l28.3-28.3c9.4-9.4 9.4-24.6.1-34zM208 336c-70.7.0-128-57.2-128-128 0-70.7 57.2-128 128-128 70.7.0 128 57.2 128 128 0 70.7-57.2 128-128 128z"/></svg></span></div><input type=search id=search-query class="mx-1 flex h-12 flex-auto appearance-none bg-transparent focus:outline-dotted focus:outline-2 focus:outline-transparent" placeholder=Search tabindex=0></form><button id=close-search-button class="flex h-8 w-8 items-center justify-center text-neutral-700 hover:text-primary-600 dark:text-neutral dark:hover:text-primary-400" title="Close (Esc)">
+<span class="icon relative inline-block px-1 align-text-bottom"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><path fill="currentcolor" d="M310.6 361.4c12.5 12.5 12.5 32.75.0 45.25C304.4 412.9 296.2 416 288 416s-16.38-3.125-22.62-9.375L160 301.3 54.63 406.6C48.38 412.9 40.19 416 32 416S15.63 412.9 9.375 406.6c-12.5-12.5-12.5-32.75.0-45.25l105.4-105.4L9.375 150.6c-12.5-12.5-12.5-32.75.0-45.25s32.75-12.5 45.25.0L160 210.8l105.4-105.4c12.5-12.5 32.75-12.5 45.25.0s12.5 32.75.0 45.25l-105.4 105.4L310.6 361.4z"/></svg></span></button></header><section class="flex-auto overflow-auto px-2"><ul id=search-results></ul></section></div></div></div></body></html>
