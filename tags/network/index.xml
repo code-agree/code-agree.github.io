@@ -4,8 +4,7 @@
 结论：问题出在 TY 端到 BN 的独有路径上。 但这次排查引出了一系列关于网卡架构和 CPU 资源分配的深层问题，值得系统梳理。
 二、中断到底是什么：一次中断，两个角色 #很多人把&amp;quot;网卡中断&amp;quot;和&amp;quot;CPU 中断&amp;quot;当作两种不同的中断，但实际上它们描述的是同一次中断的发起方和执行方。
 打个比方：有人按了你家门铃（网卡发中断），你听到铃声后起身去开门、收快递、拆包裹（CPU 处理中断）。门铃和你的行动不是两件独立的事，而是同一件事的两端。
-网卡中断（发起方）：网卡通过 DMA 将数据写入 Ring Buffer 后，通过 PCIe 总线向 CPU 发送一个电信号（MSI-X），含义是&amp;quot;Queue 5 有包到了，请处理&amp;quot;。这个动作本身几乎没有开销，网卡发完信号就结束了。
-CPU 中断处理（执行方）：CPU 收到信号后的一系列动作——暂停当前任务、保存上下文、执行硬中断处理函数、调度软中断（softirq）、NAPI 轮询收包、协议栈处理、放入 socket buffer。所有计算开销全在 CPU 侧。</description></item><item><title>低延迟系统的 CPU 核心规划：从 isolcpus 到 Busy Poll 的内核级实战</title><link>https://code-agree.github.io/blog/2026-03-30-cpu_bindcore/</link><pubDate>Mon, 30 Mar 2026 00:00:00 +0000</pubDate><guid>https://code-agree.github.io/blog/2026-03-30-cpu_bindcore/</guid><description>上一篇文章《从网线到策略引擎：Linux 网络收包全路径深度解析》解决的是&amp;quot;数据包怎么走&amp;quot;的问题——从物理层到用户态的七个阶段。本文解决的是&amp;quot;CPU 核心怎么分&amp;quot;的问题——在一个多核系统上，哪些核跑内核家务活、哪些核处理网卡中断、哪些核跑行情线程，以及为什么这样分配。
+网卡中断（发起方）：网卡通过 DMA 将数据写入 Ring Buffer 后，通过 PCIe 总线向 CPU 的中断控制器发送一个消息写入（MSI-X，Message Signaled Interrupt）——本质是一次 PCIe 内存写事务，而非传统 INTx 那样的专用电气信号线——含义是&amp;quot;Queue 5 有包到了，请处理&amp;quot;。这个动作本身几乎没有开销，网卡发完就结束了。</description></item><item><title>低延迟系统的 CPU 核心规划：从 isolcpus 到 Busy Poll 的内核级实战</title><link>https://code-agree.github.io/blog/2026-03-30-cpu_bindcore/</link><pubDate>Mon, 30 Mar 2026 00:00:00 +0000</pubDate><guid>https://code-agree.github.io/blog/2026-03-30-cpu_bindcore/</guid><description>上一篇文章《从网线到策略引擎：Linux 网络收包全路径深度解析》解决的是&amp;quot;数据包怎么走&amp;quot;的问题——从物理层到用户态的七个阶段。本文解决的是&amp;quot;CPU 核心怎么分&amp;quot;的问题——在一个多核系统上，哪些核跑内核家务活、哪些核处理网卡中断、哪些核跑行情线程，以及为什么这样分配。
 一、问题的起点：能不能把所有核都 isolate 掉？ #在低延迟系统中，isolcpus 是最常见的核心隔离手段。它的作用是将指定的 CPU 从内核调度器的默认调度域中移除，使得普通进程不会被自动调度到这些核上，从而为延迟敏感的用户线程提供&amp;quot;干净&amp;quot;的执行环境。
 一个自然的想法是：既然隔离能减少干扰，那把所有核都隔离了，再手动把用户线程绑上去，岂不是最干净？
 这样做不合理，甚至可能导致系统无法正常运行。
