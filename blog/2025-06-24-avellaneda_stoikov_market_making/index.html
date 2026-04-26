@@ -39,7 +39,7 @@ $$</p><p>👉 这个模型体现了：</p><ul><li>离市场收盘越近，价差
 \quad
 \begin{cases}
 \phi_{\text{ask}}^t = \phi_{\text{max}}^t & \text{if } q_t > 0 \
-\phi_{\text{ask}}^t = \phi_{\text{max}}^t e^{-\eta q_t} & \text{if } q_t &lt; 0
+\phi_{\text{ask}}^t = \phi_{\text{max}}^t e^{\eta q_t} & \text{if } q_t &lt; 0
 \end{cases}
 $$</p><p>这个设计逻辑是：</p><ul><li>当前若持有过多某一方向的头寸（如多头），则减少挂出同方向单的数量</li><li>达到库存中性目标（inventory mean-reversion）</li></ul><hr><h3 id=23-算法流程 class="relative group">2.3 算法流程 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#23-%e7%ae%97%e6%b3%95%e6%b5%81%e7%a8%8b aria-label=Anchor>#</a></span></h3><p>策略遵循以下流程：</p><ol><li>若订单簿中无挂单，挂出最优买卖报价；</li><li>若仅一边挂单被成交，则等待 5 秒，若未成交另一边则取消并重新挂单；</li><li>若两边都在订单簿中，每隔 1 秒刷新一次报价；</li></ol><hr><h2 id=-三交易模拟器设计 class="relative group">📌 三、交易模拟器设计 <span class="absolute top-0 w-6 transition-opacity opacity-0 -start-6 not-prose group-hover:opacity-100"><a class="group-hover:text-primary-300 dark:group-hover:text-neutral-700" style=text-decoration-line:none!important href=#-%e4%b8%89%e4%ba%a4%e6%98%93%e6%a8%a1%e6%8b%9f%e5%99%a8%e8%ae%be%e8%ae%a1 aria-label=Anchor>#</a></span></h2><p>构建了一个简化的交易环境用于模拟：</p><ul><li>市场订单到达遵循时间非齐次泊松过程，强度：</li></ul><p>$$
 \lambda(t, \xi) = \alpha_t e^{-\mu \xi}

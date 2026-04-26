@@ -53,7 +53,7 @@
     │     │     │     │     │                    │        │        │
     └─────┴─────┴─────┴─────┘                    └────────┴────────┘
          连续内存（SIMD 优化）                      连续内存（缓存友好）
-</code></pre><p><strong>控制位（Control Byte）的含义：</strong></p><ul><li><strong>0-127</strong>：7 位哈希片段（H₂，哈希值的低 7 位）</li><li><strong>128</strong>：空槽（kEmpty）</li><li><strong>129</strong>：已删除槽（kTombstone）</li></ul><p><strong>槽（Slot）结构：</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=k>struct</span> <span class=nc>Slot</span> <span class=p>{</span>
+</code></pre><p><strong>控制位（Control Byte）的含义：</strong></p><ul><li><strong>0-127</strong>：7 位哈希片段（H₂，哈希值的高 7 位）</li><li><strong>128</strong>：空槽（kEmpty）</li><li><strong>-2（0xFE）</strong>：已删除槽（kDeleted）</li></ul><p><strong>槽（Slot）结构：</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=k>struct</span> <span class=nc>Slot</span> <span class=p>{</span>
 </span></span><span class=line><span class=cl>    <span class=n>Key</span> <span class=n>key</span><span class=p>;</span>
 </span></span><span class=line><span class=cl>    <span class=n>Value</span> <span class=n>value</span><span class=p>;</span>
 </span></span><span class=line><span class=cl>    <span class=c1>// 注意：哈希值不存储在槽中，只存在控制位中

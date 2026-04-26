@@ -126,7 +126,7 @@ DRAM (~100-200 cycles)
 </span></span></span><span class=line><span class=cl><span class=c1></span>    <span class=p>}</span>
 </span></span><span class=line><span class=cl><span class=p>}</span>
 </span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=c1>// 优化：表驱动（256 字节，单 cache line）
+</span></span><span class=line><span class=cl><span class=c1>// 优化：表驱动（24 字节，单 cache line）
 </span></span></span><span class=line><span class=cl><span class=c1></span><span class=k>static</span> <span class=k>constexpr</span> <span class=n>State</span> <span class=n>transition_table</span><span class=p>[</span><span class=mi>4</span><span class=p>][</span><span class=mi>6</span><span class=p>]</span> <span class=o>=</span> <span class=p>{</span>
 </span></span><span class=line><span class=cl>    <span class=p>{</span><span class=n>S1</span><span class=p>,</span> <span class=n>S2</span><span class=p>,</span> <span class=n>S0</span><span class=p>,</span> <span class=n>S3</span><span class=p>,</span> <span class=n>S0</span><span class=p>,</span> <span class=n>S1</span><span class=p>},</span>  <span class=c1>// S0
 </span></span></span><span class=line><span class=cl><span class=c1></span>    <span class=p>{</span><span class=n>S0</span><span class=p>,</span> <span class=n>S3</span><span class=p>,</span> <span class=n>S1</span><span class=p>,</span> <span class=n>S2</span><span class=p>,</span> <span class=n>S1</span><span class=p>,</span> <span class=n>S0</span><span class=p>},</span>  <span class=c1>// S1

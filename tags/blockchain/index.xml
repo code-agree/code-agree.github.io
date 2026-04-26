@@ -2,7 +2,7 @@
 问题发现 #在使用logsSubscribe进行账户监控时，我们发现一个关键问题：某些确实发生的交易并没有被我们的监控系统捕获到。这个问题的发现促使我们深入研究Solana的交易日志机制，并最终设计了一个更全面的监控方案。
 为什么会遗漏交易？ # 日志记录机制的局限性
 程序可能不会在日志中明确记录所有涉及的账户地址 交易可能使用了PDA(Program Derived Address)或其他派生地址 某些DEX采用内部账户映射，而不是直接记录用户地址 mentions过滤器的限制
-只能捕获在日志中明确提到目标地址的交易 无法捕获通过间接方式影响目标账户的交易 解决方案 #针对上述问题，我们设计了一个多维度监控方案，通过组合多种订阅方式来确保不会遗漏任何相关交易。
+mentions匹配的是交易账户列表（accountKeys）中包含目标地址的交易，而非日志文本中出现的地址，因此只有当目标地址作为交易的显式参与账户时才会被捕获 无法捕获通过间接方式（如CPI调用中未在顶层accountKeys中列出）影响目标账户的交易 解决方案 #针对上述问题，我们设计了一个多维度监控方案，通过组合多种订阅方式来确保不会遗漏任何相关交易。
 1. 三重订阅机制 #pub struct EnhancedTradeWatcher { target_account: Pubkey, ws_client: WebSocketClient, } impl EnhancedTradeWatcher { async fn setup_comprehensive_monitoring(&amp;amp;mut self) -&amp;gt; Result&amp;lt;()&amp;gt; { // 1. logsSubscribe - 捕获显式提及 let logs_sub = json!({ &amp;#34;jsonrpc&amp;#34;: &amp;#34;2.0&amp;#34;, &amp;#34;method&amp;#34;: &amp;#34;logsSubscribe&amp;#34;, &amp;#34;params&amp;#34;: [ { &amp;#34;mentions&amp;#34;: [self.target_account.to_string()], }, { &amp;#34;commitment&amp;#34;: &amp;#34;processed&amp;#34; } ] }); // 2. programSubscribe - 监控DEX程序 let dex_program_sub = json!</description></item><item><title>Solana链上交易监控技术分析</title><link>https://code-agree.github.io/blog/2025-06-24-solana_blockchain_analysis/</link><pubDate>Thu, 19 Dec 2024 01:32:32 +0800</pubDate><guid>https://code-agree.github.io/blog/2025-06-24-solana_blockchain_analysis/</guid><description>Solana链上交易监控技术分析 #1. Solana DEX 交易形式 #1.1 直接 DEX 交易 #用户直接与 DEX 合约交互，交易流程简单直接。
 用户钱包 -&amp;gt; DEX程序 (如Raydium/Orca) -&amp;gt; Token Program 特点：
 交易日志简洁，主要包含单个 DEX 程序的调用 容易识别交易平台和交易对 Token Program 的 transfer 指令较少 1.2 聚合器交易（Jupiter） #通过聚合器路由到单个或多个 DEX。
